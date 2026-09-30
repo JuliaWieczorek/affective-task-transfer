@@ -1,0 +1,15 @@
+{
+  "backbone": "bert-base-uncased",
+  "architecture": "soft_sharing",
+  "tasks": ["sentiment", "emotion", "intensity"],
+  "seed": 42,
+  "dataset": "data/prepared/meisd-v2",
+  "output": "outputs/meisd_soft_bert_uncased_seed42",
+  "epochs": 6,
+  "batch_size": 16,
+  "max_length": 128,
+  "learning_rate": 0.00002,
+  "soft_lambda": 0.0001,
+  "soft_normalization": "mean_pairs",
+  "diagnostics": true
+}

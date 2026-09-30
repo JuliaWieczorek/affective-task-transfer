@@ -1,0 +1,93 @@
+{
+  "source_repository": "https://github.com/JuliaWieczorek/mtl-emotion-intensity-sentiment",
+  "source_commit": "b5d8aaae5266229970b641f0b3b2e6e6da8607ea",
+  "source_path": "EMOTIA-ML/multi_emotion_sentiment_intensity_classifier.py",
+  "source_sha256": "60ad5d44067ab4879d0662e87e7f62f32ad7b1740eecc4925f9530d854963121",
+  "destination": "src\\affective_task_transfer\\models\\inherited.py",
+  "classes": [
+    {
+      "symbol": "MultiTaskDataset",
+      "source_start": 255,
+      "source_end": 281,
+      "sha256": "3572f0230dfacb6a7baa887034aefe74c877f2f3837ec6462ae55c20abe76091"
+    },
+    {
+      "symbol": "MultiTaskBERTLSTM",
+      "source_start": 283,
+      "source_end": 334,
+      "sha256": "7cbec163b2be3323229b295c7a251faf8c73b782f86de4027c0d174fedeb1dea"
+    },
+    {
+      "symbol": "MultiTaskBERT",
+      "source_start": 336,
+      "source_end": 359,
+      "sha256": "fd30dc935c0989182e48aa10f025e045fa179203938daed8c332c83b772e7ef3"
+    },
+    {
+      "symbol": "AdapterModule",
+      "source_start": 362,
+      "source_end": 385,
+      "sha256": "fd229b904d0c7c0750398ca762c4def92216bb87c46b76d4510975dc40db045c"
+    },
+    {
+      "symbol": "MultiTaskBERTWithAdapters",
+      "source_start": 388,
+      "source_end": 429,
+      "sha256": "eeadaca0928cff29990c1b82754335e93b613573ae0e753adba37f5a85d7bd75"
+    },
+    {
+      "symbol": "MMOE_Core",
+      "source_start": 432,
+      "source_end": 474,
+      "sha256": "a940eede6f0e90f75361506544319343cf93df6facbc02723df703fb8d58ad26"
+    },
+    {
+      "symbol": "MultiTaskMMOE",
+      "source_start": 477,
+      "source_end": 513,
+      "sha256": "06fd225674af993223321a27ffad019d34e8bec28ad79fd23ac11fe51acb19f0"
+    },
+    {
+      "symbol": "SingleTaskModel",
+      "source_start": 515,
+      "source_end": 550,
+      "sha256": "49580f405b5605bb213e7bbbfa777fbc5bbf0735e11c7fb19ed59cb0f40dc87a"
+    },
+    {
+      "symbol": "SoftSharingModel",
+      "source_start": 600,
+      "source_end": 649,
+      "sha256": "812fad3d5e4eb2bc52774e3babc4b63f403d0e8f194c011fa95bf248dce2f8ce"
+    },
+    {
+      "symbol": "CrossStitchModel",
+      "source_start": 652,
+      "source_end": 690,
+      "sha256": "db3ddd6a4d4cebf12cdff6d8a6ab44442f30cde9c4132bd3caa723d5a34771e7"
+    },
+    {
+      "symbol": "SingleTaskSentiment",
+      "source_start": 693,
+      "source_end": 704,
+      "sha256": "5b635122cfdaac24c12ee7f447d35f768612e2aece89e14242677bf635ea9c17"
+    },
+    {
+      "symbol": "SingleTaskEmotion",
+      "source_start": 706,
+      "source_end": 717,
+      "sha256": "c6bd2de7120da8f8c61bd31bd3c23b78ac0152987620e8f9d10577244782c4c0"
+    },
+    {
+      "symbol": "SingleTaskIntensity",
+      "source_start": 719,
+      "source_end": 730,
+      "sha256": "b1a03f93265429a9aa8c72d266ef14488687a968b9f42adada22e054263be2ec"
+    },
+    {
+      "symbol": "FocalLoss",
+      "source_start": 732,
+      "source_end": 742,
+      "sha256": "f6086df8dcd205ef3eacd24f4aac69af8a7e6f73782e5ab8b7357ee6d50700bb"
+    }
+  ]
+}

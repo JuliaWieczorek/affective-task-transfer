@@ -1,0 +1,32 @@
+{
+  "source_sha256": "458add484602056689a64079385b47a01f3bdba1a9531a33ba23880b1934c4ad",
+  "expanded_sha256": "20974b3232d2dd1e903d5b333e6267a826eb4845cb922d3a744e84f045e49019",
+  "raw_sha256": "30e5e212a2bf390af6d5fa01e8ac211072073a93b32c209917e276ca3957c749",
+  "records": 4219,
+  "originals": 1611,
+  "augmentations": 2608,
+  "augmentation_text_source": "expanded.augmented",
+  "dialogues": 980,
+  "all_parents_resolved": true,
+  "unit": "historical dialogue half",
+  "issues": {
+    "corrected_positve_labels": 83,
+    "ambiguous_repeated_emotion_intensity_positions": 216,
+    "conflicting_text_labels": 6
+  },
+  "limitations": [
+    "Historical filtering and target-frequency balancing preceded this re-split; this evaluates the retained historical population.",
+    "Segment labels are inherited, not independently reannotated. The historical converter averaged intensities by annotation slot, which need not preserve emotion identity.",
+    "Neutral intensity and fallback labels require semantic caution; masks fix absent emotions, not annotation validity."
+  ],
+  "emotions": [
+    "acceptance",
+    "anger",
+    "disgust",
+    "fear",
+    "joy",
+    "neutral",
+    "sadness",
+    "surprise"
+  ]
+}
