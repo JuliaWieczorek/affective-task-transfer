@@ -39,7 +39,7 @@ def seed_everything(seed):
     if torch.cuda.is_available(): torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark=False
     torch.backends.cudnn.deterministic=True
-    torch.use_deterministic_algorithms(True, warn_only=True)
+    torch.use_deterministic_algorithms(True)
 
 def move(batch,device):
     return {k:v.to(device) for k,v in batch.items()}
@@ -116,7 +116,7 @@ def train(dataset, output, config):
     total_steps=updates_per_epoch*config["epochs"]
     if config["max_steps"]:total_steps=min(total_steps,config["max_steps"])
     scheduler=get_linear_schedule_with_warmup(optimizer,int(total_steps*config["warmup_ratio"]),total_steps)
-    run_manifest={"config":config,"environment":environment(),"dataset_manifest_sha256":sha256(Path(dataset)/"manifest.json"),"dataset_manifest":manifest,"status":"running","smoke":config["smoke"],"parameters":sum(p.numel() for p in model.parameters()),"trainable_parameters":sum(p.numel() for p in model.parameters() if p.requires_grad),"train_records_used":len(rows),"dev_records_used":len(dev),"token_audit":{"train":token_audit(rows,tokenizer,config["max_length"]),"dev":token_audit(dev,tokenizer,config["max_length"])},"class_weights":{"emotion":loss_fns.em_weights.cpu().tolist(),"sentiment":loss_fns.sent_weights.cpu().tolist() if loss_fns.sent_weights is not None else None},"encoder_revision":getattr(encoder.config,"_commit_hash",None),"selection":"mean dev task macro-F1; intensity macro over emotions; emotion threshold selected on dev"}
+    run_manifest={"config":config,"environment":environment(),"dataset_manifest_sha256":sha256(Path(dataset)/"manifest.json"),"dataset_manifest":manifest,"status":"running","smoke":config["smoke"],"deterministic_algorithms":True,"parameters":sum(p.numel() for p in model.parameters()),"trainable_parameters":sum(p.numel() for p in model.parameters() if p.requires_grad),"train_records_used":len(rows),"dev_records_used":len(dev),"token_audit":{"train":token_audit(rows,tokenizer,config["max_length"]),"dev":token_audit(dev,tokenizer,config["max_length"])},"class_weights":{"emotion":loss_fns.em_weights.cpu().tolist(),"sentiment":loss_fns.sent_weights.cpu().tolist() if loss_fns.sent_weights is not None else None},"encoder_revision":getattr(encoder.config,"_commit_hash",None),"selection":"mean dev task macro-F1; intensity macro over emotions; emotion threshold selected on dev"}
     write_json(output/"manifest.json",run_manifest)
     probe_rows=rows[:config["diagnostic_batch_size"]]
     probe=move(next(iter(make_loader(probe_rows,tokenizer,config))),device)
@@ -175,6 +175,7 @@ def evaluate_run(dataset,run,split="test"):
     if (run/f"{split}_results.json").exists():raise FileExistsError("Evaluation already saved; preserve the existing result")
     splits,data_manifest=load_dataset(dataset)
     rows=splits[split][:config["eval_limit"]] if config["eval_limit"] else splits[split]
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG",":4096:8")
     seed_everything(config["seed"]);torch.set_num_threads(config["threads"])
     device=torch.device(("cuda" if torch.cuda.is_available() else "cpu") if config["device"]=="auto" else config["device"])
     eval_config=dict(config)

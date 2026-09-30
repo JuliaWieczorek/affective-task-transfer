@@ -41,4 +41,6 @@ Między przygotowanymi zbiorami MEISD i BRIGHTER nie znaleziono identycznych tek
 
 Sparowane różnice MTL–STL odnoszą się do tego samego seedu, backbone'u, zbioru i zadania. Dla MAE korzyść odwraca znak. Raport zapisuje każdy seed, średnią, SD i opisowy 95% przedział t; pięć seedów nie obejmuje niepewności doboru danych ani błędów etykiet. Gradienty są liczone na stałej próbce train w trybie eval, bez zmiany wag, zapisanych gradientów czy generatora losowego. Wspólny kierunek gradientów, krzywe strat i routing ekspertów są wskazówkami o optymalizacji. Nie dowodzą semantycznego przepływu wiedzy między zadaniami.
 
+Trening wymaga deterministycznych algorytmów PyTorch i ustawia `CUBLAS_WORKSPACE_CONFIG`. Jeśli docelowy GPU użyje operacji bez deterministycznej implementacji, run zakończy się błędem zamiast zapisać nieporównywalny wynik. Manifest odnotowuje tę politykę.
+
 Pełne treningi nie zostały uruchomione. Krótkie przebiegi z losowym małym BERT sprawdzają wyłącznie działanie pipeline'u; ich metryk nie wolno traktować jako wyniku badawczego.
