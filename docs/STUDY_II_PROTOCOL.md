@@ -1,0 +1,31 @@
+# Study II protocol and dissertation integration
+
+## Purpose
+
+Study I in the dissertation presents the historical task-composition and architecture comparison. Its original evidence is retained, with confirmed errors in the description and interpretation of metrics corrected. Study II tests whether the main task-interaction patterns persist under a grouped split, active-emotion intensity scoring, five training seeds, direct optimisation diagnostics, and an additional corpus. It uses the inherited models and training objectives. Each study reports comparisons within its own data and metric protocol.
+
+## Operational data unit
+
+The modelling unit in Study II is the **start half** of a historical MEISD dialogue. This keeps the observation window aligned with the earlier question about affect before the later conversation. The source CSV contained both `start` and `end` examples; selecting `start` is deliberate and is recorded in the prepared-data manifest. Dialogue identifiers and normalized exact-text links define split groups. Existing generated texts inherit the segment of their source example. Augmentations are retained only in training; dev and test contain source text. BRIGHTER English Track B is separately trained and evaluated as an external two-task experiment.
+
+The historical intensity labels were constructed by averaging annotation positions, which can mix emotion identities across utterances. Study II preserves these inherited labels after masking repeated-emotion conflicts and absent emotions; it does not claim that the entire historical label construction has been independently validated. A manual, class-aware audit of a documented random sample of original and generated texts is recommended before interpreting fine-grained affective meaning. No new text generation is planned.
+
+## Primary comparison, fixed before test evaluation
+
+Use BERT-base-uncased and seeds 42, 52, 62, 72, 82 for all conditions. The MEISD matrix has three matched STL tasks, three two-task soft-sharing pairs, and four three-task architectures (hard sharing, soft sharing, adapters, MMoE): **50 runs**. BRIGHTER has two matched STL tasks and the four two-task architectures: **30 runs**. The three other inherited backbones and BERT-LSTM/cross-stitch can be added in separately identified optional matrices after timing the primary protocol. Optional soft-sharing projection/regularisation ablations also require an explicit matrix flag.
+
+Primary outcomes are sentiment macro-F1, multilabel emotion macro-F1, and intensity macro-F1 averaged over supported active emotions. Also report accuracy, precision, recall, F1, confusion matrices, support by class, pooled active-intensity accuracy/F1/MAE, and joint emotion-intensity pair F1. The main MEISD contrasts are each task's MTL score against its matched STL score, the emotion–intensity pair against its constituent STL tasks, and the soft-sharing three-task model against the two-task pair when assessing the added sentiment task. BRIGHTER compares the emotion–intensity model with its two STL tasks. Architecture contrasts among the four three-task MEISD models are descriptive system comparisons because their parameterisation also differs.
+
+Checkpoint and emotion-threshold selection use dev. Test is evaluated after configurations and reporting rules are frozen. Report every seed, the mean and standard deviation of seed-paired differences, and descriptive intervals. Five seeds on one split quantify training variation conditional on that split. Small class support, particularly high intensity, limits category-specific conclusions. A positive metric difference is called an observed gain; inferential claims require attention to support, uncertainty, and multiplicity.
+
+## Diagnostics and claims
+
+The fixed training probe is selected to cover available labels; its manifest lists record IDs and uncovered strata. Probe batches are retained separately. Plotted norms, cosine similarities, and routing weights are record-weighted summaries of batch diagnostics, not pooled gradients or population estimates. Diagnostics run for the multi-task conditions; STL training still records ordinary loss trajectories and saves evaluation outputs. Examine task-loss trajectories, gradient norms and cosine similarities, and MMoE gate use together with performance. Similarity or conflict in gradients alone does not establish a causal transfer mechanism. The BRIGHTER presence labels are derived from intensity > 0, so its two tasks are not independently annotated. BRIGHTER supports conclusions about the portability of the method comparison across corpora, not full three-task validation in support dialogue.
+
+## Two-day run gate
+
+Before using the target computer for all 80 runs: (1) verify source hashes and both prepared manifests; (2) complete tests and short real-backbone pilots of hard sharing, soft sharing, adapters, and MMoE on both datasets; (3) measure training, diagnostic, evaluation, and storage costs per architecture; (4) estimate the full matrix cost with a margin for retries. If the estimated cost exceeds the available window, preserve the complete prespecified matrix and run the core matched contrasts first. Record any incomplete matrix as incomplete rather than selecting configurations by favourable test outcomes. Detailed commands are in `RUN_HANDOFF.md`.
+
+## Dissertation edits after results
+
+Present Study I and Study II as connected investigations. Correct Study I's description of the dialogue-half unit, historical intensity metric, and actual adapter implementation. Re-derive the architecture conclusions from the applicable evidence. Update the abstract, RQ3 synthesis, Chapter 7, and any Chapter 6 checkpoint-provenance statement. Chapter 6 forecasting and training-set-size questions retain their separate scope.

@@ -10,6 +10,22 @@ def write_csv(path,rows):
     with Path(path).open("w",encoding="utf-8",newline="") as f:
         writer=csv.DictWriter(f,fieldnames=sorted({k for r in rows for k in r}));writer.writeheader();writer.writerows(rows)
 
+def conditional_task_deltas(rows):
+    """Measured effect of adding one task to a soft-sharing pair on the same seed."""
+    pairs={(r["dataset_hash"],r["backbone"],r["seed"],r["task"],r["metric"],frozenset(r["tasks"].split("+"))):r
+           for r in rows if r["architecture"]=="soft_sharing" and len(r["tasks"].split("+"))==2}
+    result=[]
+    for triple in rows:
+        if triple["architecture"]!="soft_sharing" or len(triple["tasks"].split("+"))!=3 or triple["task"]=="joint":continue
+        tasks=set(triple["tasks"].split("+"))
+        for added in tasks-{triple["task"]}:
+            pair_tasks=frozenset(tasks-{added})
+            pair=pairs.get((triple["dataset_hash"],triple["backbone"],triple["seed"],triple["task"],triple["metric"],pair_tasks))
+            if pair is None:continue
+            delta=triple["value"]-pair["value"]
+            result.append({k:triple[k] for k in ("dataset_hash","backbone","seed","task","metric")}|{"pair_condition":pair["condition"],"triple_condition":triple["condition"],"added_task":added,"delta_triple_minus_pair":delta,"benefit":(-delta if triple["metric"]=="mae" else delta)})
+    return result
+
 def plot_run(run,output):
     import matplotlib
     matplotlib.use("Agg")
@@ -44,7 +60,7 @@ def report(root,output,split="test",allow_smoke=False):
         dataset_hash=manifest["dataset_manifest_sha256"]
         runs[str(run)]={"manifest":manifest,"result":result,"condition":condition}
         resources.append({"run":str(run),"dataset_hash":dataset_hash,"backbone":cfg["backbone"],"condition":condition,"seed":cfg["seed"],"parameters":manifest["parameters"],"trainable_parameters":manifest["trainable_parameters"],"elapsed_seconds":manifest["elapsed_seconds"],"diagnostic_seconds":manifest["diagnostic_seconds"],"optimizer_steps":manifest["optimizer_steps"],"peak_cuda_bytes":manifest["peak_cuda_bytes"],"train_truncated_fraction":manifest["token_audit"]["train"]["truncated_fraction"]})
-        for task in cfg["tasks"]:
+        for task in [*cfg["tasks"],*(["joint"] if "joint" in result["metrics"] else [])]:
             values=result["metrics"][task]
             detail={"overall":values}
             if task in ("emotion","intensity"):
@@ -53,12 +69,21 @@ def report(root,output,split="test",allow_smoke=False):
                 confusion[f"{run}/{task}/{emotion}"]=scope["confusion_matrix"]
                 for label,scores in scope["per_class"].items():
                     per_class.append({"run":str(run),"dataset_hash":dataset_hash,"backbone":cfg["backbone"],"condition":condition,"seed":cfg["seed"],"task":task,"emotion":emotion,"class":label,**scores})
-            for metric in ("accuracy","subset_accuracy","label_accuracy","macro_precision","macro_recall","macro_f1","weighted_f1","micro_f1","mae","emotion_macro_f1","emotion_macro_accuracy"):
+            for metric in ("accuracy","subset_accuracy","label_accuracy","macro_precision","macro_recall","macro_f1","weighted_f1","micro_f1","mae","emotion_macro_f1","emotion_macro_accuracy","pair_precision","pair_recall","pair_micro_f1"):
                 value=values.get(metric)
                 if value is None:continue
                 rows.append({"run":str(run),"dataset_hash":dataset_hash,"backbone":cfg["backbone"],"condition":condition,"architecture":cfg["architecture"],"tasks":"+".join(cfg["tasks"]),"seed":cfg["seed"],"task":task,"metric":metric,"value":value,"smoke":manifest["smoke"]})
         plot_run(run,output)
     write_csv(output/"per_seed.csv",rows)
+    baseline_rows=[]
+    for run,item in runs.items():
+        cfg=item["manifest"]["config"]
+        for task,values in item["result"].get("majority_baseline",{}).items():
+            for metric in ("accuracy","macro_f1","micro_f1","emotion_macro_f1","pair_micro_f1","mae"):
+                value=values.get(metric)
+                if value is not None:
+                    baseline_rows.append({"run":run,"dataset_hash":item["manifest"]["dataset_manifest_sha256"],"backbone":cfg["backbone"],"seed":cfg["seed"],"task":task,"metric":metric,"value":value})
+    write_csv(output/"majority_baselines.csv",baseline_rows)
     write_csv(output/"resources.csv",resources)
     write_csv(output/"per_class.csv",per_class)
     write_json(output/"confusion_matrices.json",confusion)
@@ -79,6 +104,18 @@ def report(root,output,split="test",allow_smoke=False):
             direction=-1 if r["metric"]=="mae" else 1
             deltas.append({k:r[k] for k in ("dataset_hash","backbone","condition","seed","task","metric")}|{"delta_mtl_minus_stl":delta,"improvement_direction":direction,"benefit":delta*direction,"transfer":"positive" if delta*direction>0 else "negative" if delta*direction<0 else "tie"})
     write_csv(output/"paired_deltas.csv",deltas)
+    conditional=conditional_task_deltas(rows)
+    write_csv(output/"conditional_deltas.csv",conditional)
+    class_index={(r["dataset_hash"],r["backbone"],r["seed"],r["task"],r["emotion"],r["class"]):r for r in per_class if r["condition"]=="stl_"+r["task"]}
+    class_deltas=[]
+    for r in per_class:
+        if r["condition"]=="stl_"+r["task"]:continue
+        key=(r["dataset_hash"],r["backbone"],r["seed"],r["task"],r["emotion"],r["class"])
+        base=class_index.get(key)
+        if base is None:continue
+        for metric in ("precision","recall","f1-score"):
+            class_deltas.append({k:r[k] for k in ("dataset_hash","backbone","condition","seed","task","emotion","class")}|{"metric":metric,"delta_mtl_minus_stl":r[metric]-base[metric],"support":r["support"]})
+    write_csv(output/"class_paired_deltas.csv",class_deltas)
     paired=defaultdict(list)
     for row in deltas:
         paired[tuple(row[k] for k in ("dataset_hash","backbone","condition","task","metric"))].append(row)
@@ -93,7 +130,7 @@ def report(root,output,split="test",allow_smoke=False):
         else:margin=None
         paired_summary.append(dict(zip(("dataset_hash","backbone","condition","task","metric"),key))|{"n_paired_seeds":len(benefits),"mean_benefit":mean,"sd_benefit":sd,"ci95_low":mean-margin if margin is not None else None,"ci95_high":mean+margin if margin is not None else None,"positive_seeds":sum(r["transfer"]=="positive" for r in values),"negative_seeds":sum(r["transfer"]=="negative" for r in values),"ties":sum(r["transfer"]=="tie" for r in values)})
     write_csv(output/"paired_summary.csv",paired_summary)
-    write_json(output/"report_manifest.json",{"split":split,"allow_smoke":allow_smoke,"runs":list(runs),"summary_rows":len(summary),"paired_rows":len(deltas),"paired_summary_rows":len(paired_summary),"interpretation":"Paired seed differences on one split use the same backbone and seed. Positive benefit means MTL outperformed matched STL; MAE is inverted. The t interval is descriptive with five seeds and does not cover dataset sampling or label uncertainty. Gradient agreement and routing do not prove causal knowledge flow. No cross-dataset pooling."})
-    text=["# Experiment report", "", f"Split: {split}. Runs: {len(runs)}. Smoke inclusion: {allow_smoke}.","", "See per_seed.csv, per_class.csv, confusion_matrices.json, summary.csv, paired_deltas.csv, paired_summary.csv and resources.csv.","", "Gradient agreement and routing are diagnostics, not proof of knowledge flow. Positive/negative transfer is evaluated against the paired STL baseline; inspect task trade-offs and intervals across seeds."]
+    write_json(output/"report_manifest.json",{"split":split,"allow_smoke":allow_smoke,"runs":list(runs),"summary_rows":len(summary),"paired_rows":len(deltas),"paired_summary_rows":len(paired_summary),"conditional_rows":len(conditional),"class_paired_rows":len(class_deltas),"interpretation":"Paired seed differences on one split use the same backbone and seed. Positive benefit means MTL outperformed matched STL; MAE is inverted. Conditional differences compare the soft-sharing pair with its three-task model. The t interval is descriptive with five seeds and does not cover dataset sampling or label uncertainty. Gradient agreement and routing do not prove causal knowledge flow. No cross-dataset pooling."})
+    text=["# Experiment report", "", f"Split: {split}. Runs: {len(runs)}. Smoke inclusion: {allow_smoke}.","", "See per_seed.csv, per_class.csv, class_paired_deltas.csv, majority_baselines.csv, conditional_deltas.csv, confusion_matrices.json, summary.csv, paired_deltas.csv, paired_summary.csv and resources.csv.","", "Gradient agreement and routing are diagnostics, not proof of knowledge flow. Positive/negative transfer is evaluated against the paired STL baseline; inspect task trade-offs and intervals across seeds."]
     (output/"README.md").write_text("\n".join(text),encoding="utf-8")
     return {"runs":len(runs),"output":str(output)}

@@ -8,6 +8,9 @@ from affective_task_transfer.models import build_model
 from affective_task_transfer.losses import TaskLosses
 from affective_task_transfer.metrics import evaluate_predictions
 from affective_task_transfer.diagnostics import capture
+from affective_task_transfer.diagnostics import capture_batches, select_probe
+from affective_task_transfer.training import make_loader
+from transformers import AutoTokenizer
 from affective_task_transfer.io import read_json
 
 def batch():
@@ -57,6 +60,25 @@ def test_diagnostics_do_not_change_training(backbone,rows,arch):
     assert model.training and all(p.grad is None for p in model.parameters())
     assert all(torch.equal(before[k],v) for k,v in model.state_dict().items())
     assert len(result["gradient_norms"])==3
+
+def test_probe_covers_labels_and_consumes_multiple_batches(backbone,rows):
+    selected,meta=select_probe(rows,6)
+    assert len(selected)==6 and meta["uncovered_strata"]==[]
+    cfg=load_config(overrides={"backbone":backbone,"architecture":"hard_sharing","tasks":["emotion","intensity"],"batch_size":2})
+    model=build_model(cfg,2)
+    tokenizer=AutoTokenizer.from_pretrained(backbone)
+    batches=list(make_loader(selected,tokenizer,cfg))
+    result=capture_batches(model,batches,TaskLosses(rows,["a","b"],cfg["tasks"],"cpu"),cfg,[r["id"] for r in selected])
+    assert len(result["batches"])==3
+    assert result["probe_ids"]==[r["id"] for r in selected]
+    assert result["valid_intensity_labels"]==sum(sum(v>=0 for v in r["intensity"]) for r in selected)
+    assert all(p.grad is None for p in model.parameters())
+
+def test_training_loader_keeps_singleton_tail_with_previous_batch(backbone,rows):
+    cfg=load_config(overrides={"backbone":backbone,"batch_size":5})
+    batches=list(make_loader(rows,AutoTokenizer.from_pretrained(backbone),cfg,shuffle=True))
+    assert len(batches)==1
+    assert len(batches[0]["sentiment"])==6
 
 def test_inherited_classes_match_recorded_source_hashes():
     root=Path(__file__).resolve().parents[1]

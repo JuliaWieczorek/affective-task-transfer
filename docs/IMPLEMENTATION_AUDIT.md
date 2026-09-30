@@ -1,5 +1,7 @@
 # Audyt kodu i danych dla rozdziału 5
 
+> The preparation counts below document the earlier `meisd-v2`/`brighter-v1` protocol. The active Study II protocol selects only `start` halves and preserves every official BRIGHTER test record. See `STUDY_II_PROTOCOL.md` and the Study II prepared-data manifests for current counts.
+
 ## Zakres migracji
 
 Źródło: `mtl-emotion-intensity-sentiment`, commit `b5d8aaae5266229970b641f0b3b2e6e6da8607ea`, `EMOTIA-ML/multi_emotion_sentiment_intensity_classifier.py`. Klasy modeli, datasetu i FocalLoss skopiowano jako definicje AST do `models/inherited.py`. `docs/provenance.json` zawiera linie i SHA-256 każdej definicji; test sprawdza zgodność. `SoftSharingModel` występował dwukrotnie: migrowana jest ostatnia, faktycznie wiążąca definicja. Adapter w `models/__init__.py` ujednolica interfejs historycznych wyjść i umożliwia ablacje bez zmiany kodu odziedziczonych klas.

@@ -1,7 +1,7 @@
 from pathlib import Path
 from .io import read_json
 
-DEFAULTS = dict(architecture="soft_sharing", backbone="bert-base-uncased", tasks=["sentiment","emotion","intensity"], seed=42, max_length=128, batch_size=16, epochs=6, learning_rate=2e-5, weight_decay=0.01, dropout=0.4, warmup_ratio=0.2, accumulation_steps=1, patience=2, clip_norm=1.0, weights={"sentiment":1.0,"emotion":2.0,"intensity":0.7}, focal_gamma=2.0, soft_lambda=1e-4, soft_normalization="mean_pairs", shared_projection=True, adapter_bottleneck=64, num_experts=4, expert_hidden=256, lstm_hidden=128, threshold_candidates=[0.3,0.4,0.5,0.6,0.7], device="auto", num_workers=0, diagnostic_batch_size=8, diagnostics=True, max_steps=None, train_limit=None, eval_limit=None, threads=2, smoke=False, stl_baseline="matched_stl")
+DEFAULTS = dict(architecture="soft_sharing", backbone="bert-base-uncased", tasks=["sentiment","emotion","intensity"], seed=42, max_length=128, batch_size=16, epochs=6, learning_rate=2e-5, weight_decay=0.01, dropout=0.4, warmup_ratio=0.2, accumulation_steps=1, patience=2, clip_norm=1.0, weights={"sentiment":1.0,"emotion":2.0,"intensity":0.7}, focal_gamma=2.0, soft_lambda=1e-4, soft_normalization="mean_pairs", shared_projection=True, adapter_bottleneck=64, num_experts=4, expert_hidden=256, lstm_hidden=128, threshold_candidates=[0.3,0.4,0.5,0.6,0.7], device="auto", num_workers=0, diagnostic_batch_size=32, diagnostics=True, max_steps=None, train_limit=None, eval_limit=None, threads=2, smoke=False, stl_baseline="matched_stl")
 
 def load_config(path=None, overrides=None):
     config = DEFAULTS | (read_json(path) if path else {}) | (overrides or {})

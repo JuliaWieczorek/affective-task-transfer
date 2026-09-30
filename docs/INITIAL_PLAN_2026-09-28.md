@@ -1,5 +1,7 @@
 # Affective Task Transfer
 
+> Historical planning snapshot (28 September 2026). The implemented Study II scope and commands are in `../README.md` and `STUDY_II_PROTOCOL.md`. Counts and proposed steps below are retained only as a record of the initial design.
+
 ## Plan projektu i badania do rozdziału 5
 
 **Status:** plan przed implementacją, 28 września 2026 r. Opisane eksperymenty i komendy są projektowane; nie stanowią wykonanych badań ani działającego API.

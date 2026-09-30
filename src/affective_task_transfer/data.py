@@ -30,10 +30,10 @@ def recover_halves(raw_path):
         # Intentionally reproduce historical grouping/order, not a new aggregation.
         rows = sorted(rows, key=lambda r: int(r["uttr_ids"]))
         mid = math.ceil(len(rows) / 2)
-        for segment in (rows[:mid], rows[mid:]):
+        for half_name, segment in (("start",rows[:mid]), ("end",rows[mid:])):
             text = " ".join(r["Utterances"].strip() for r in segment if r["Utterances"].strip())
             if text:
-                lookup[normalize(text)].add("meisd:" + dialog)
+                lookup[normalize(text)].add(("meisd:" + dialog,half_name))
     return lookup
 
 def meisd_records(csv_path, raw_path, expanded_path=None):
@@ -56,14 +56,21 @@ def meisd_records(csv_path, raw_path, expanded_path=None):
         parent_norm = normalize(parent)
         if augmented and parent_norm not in originals:
             raise ValueError(f"Unresolved augmentation parent at record {i}")
-        dialogs = halves.get(parent_norm, set())
+        matches = halves.get(parent_norm, set())
+        dialogs = {dialog for dialog,_ in matches}
         if len(dialogs) != 1:
             raise ValueError(f"Expected one raw dialogue for record {i}, found {len(dialogs)}")
+        segments = {name for _,name in matches}
+        if len(segments)!=1:
+            raise ValueError(f"Ambiguous dialogue half for record {i}")
+        segment=next(iter(segments))
         text = row["Utterances"].strip()
         if expanded is not None:
             previous = expanded[i]
             if any(previous[k] != row[k] for k in ("Utterances", "original", "mode")):
                 raise ValueError(f"Expanded source and one-hot CSV are misaligned at record {i}")
+            if not augmented and previous.get("segment",segment).strip()!=segment:
+                raise ValueError(f"Raw dialogue half and expanded segment differ at record {i}")
             if previous["sentiment"].replace("positve", "positive").lower() != row["sentiment"].lower():
                 raise ValueError(f"Sentiment conversion differs at record {i}")
             if previous["sentiment"] == "positve":
@@ -121,7 +128,7 @@ def meisd_records(csv_path, raw_path, expanded_path=None):
             cols = ["sentiment"] + [f"{kind}__{n}" for n in emotions for kind in ("emotion", "intensity")]
             if any(row[c] != original[c] for c in cols):
                 raise ValueError(f"Augmentation labels differ from parent at record {i}")
-        records.append({"id": f"meisd-{i:05d}", "text": text, "source_dialogue_id": next(iter(dialogs)), "parent_id": text_id(parent), "is_augmented": augmented, "augmentation_method": row["mode"], "emotion": e, "intensity": intensities, "sentiment": SENTIMENTS.index(sentiment)})
+        records.append({"id": f"meisd-{i:05d}", "text": text, "source_dialogue_id": next(iter(dialogs)), "segment":segment, "parent_id": text_id(parent), "is_augmented": augmented, "augmentation_method": row["mode"], "emotion": e, "intensity": intensities, "sentiment": SENTIMENTS.index(sentiment)})
     # Exact copies with contradictory targets cannot be silently split/deduplicated.
     by_text = defaultdict(set)
     for r in records:
@@ -191,8 +198,13 @@ def save_dataset(output, splits, emotions, audit, sentiment=True):
     write_json(output/"manifest.json", manifest)
     return manifest
 
-def prepare_meisd(csv_path, raw_path, output, seed=2026, expanded_path=None):
+def prepare_meisd(csv_path, raw_path, output, seed=2026, expanded_path=None, first_half_only=True):
     records, emotions, audit = meisd_records(csv_path, raw_path, expanded_path)
+    audit["source_half_counts"] = dict(Counter(r["segment"] for r in records if not r["is_augmented"]))
+    audit["prepared_segment"] = "start" if first_half_only else "both"
+    if first_half_only:
+        records=[r for r in records if r["segment"]=="start"]
+    audit["selected_records_before_split"] = len(records)
     records = assign_groups(records, seed)
     targets_by_text = defaultdict(set)
     for r in records:
@@ -238,27 +250,25 @@ def prepare_brighter(input_dir, output, revision=None):
             h = text_id(r["text"])
             parsed.append({"id":r.get("id", f"{split}-{i}"), "text":r["text"], "group_id":h, "parent_id":h, "source_dialogue_id":None, "is_augmented":False, "emotion":[int(v>0) for v in values], "intensity":[v-1 if v else -100 for v in values], "sentiment":-100})
         splits[split] = parsed
-    # Preserve official test rows except ambiguous identical text with conflicting
-    # labels. Remove train/dev copies of evaluation text before model fitting.
-    labels_by_text = defaultdict(set)
-    for rows in splits.values():
-        for r in rows:
-            labels_by_text[normalize(r["text"])].add(tuple(r["intensity"]))
-    conflicts = {text for text, labels in labels_by_text.items() if len(labels) > 1}
-    removed_conflicts = {}
-    for split in splits:
-        before = len(splits[split])
-        splits[split] = [r for r in splits[split] if normalize(r["text"]) not in conflicts]
-        removed_conflicts[split] = before-len(splits[split])
+    # Official test membership and labels are held fixed. Remove text overlap
+    # from earlier splits using only normalized text, never held-out labels.
+    train_labels_by_text = defaultdict(set)
+    for r in splits["train"]:
+        train_labels_by_text[normalize(r["text"])].add(tuple(r["intensity"]))
+    conflicting_train_texts = {text for text, labels in train_labels_by_text.items() if len(labels)>1}
+    before=len(splits["train"])
+    splits["train"]=[r for r in splits["train"] if normalize(r["text"]) not in conflicting_train_texts]
+    removed_conflicts={"train":before-len(splits["train"]),"dev":0,"test":0}
     excluded_overlap = {}
     seen_later = set()
     for split in ("test", "dev", "train"):
         before = len(splits[split])
-        splits[split] = [r for r in splits[split] if normalize(r["text"]) not in seen_later]
+        if split!="test":
+            splits[split] = [r for r in splits[split] if normalize(r["text"]) not in seen_later]
         excluded_overlap[split] = before-len(splits[split])
         seen_later.update(normalize(r["text"]) for r in splits[split])
     removed_duplicates = {}
-    for split in splits:
+    for split in ("train","dev"):
         seen, kept = set(), []
         for r in splits[split]:
             key=(normalize(r["text"]),tuple(r["intensity"]))
@@ -266,7 +276,8 @@ def prepare_brighter(input_dir, output, revision=None):
                 kept.append(r);seen.add(key)
         removed_duplicates[split] = len(splits[split])-len(kept)
         splits[split] = kept
-    audit = {"dataset":"brighter-dataset/BRIGHTER-emotion-intensities", "revision":revision, "input_hashes":hashes, "unit":"text snippet", "emotion_presence":"derived from Track B intensity > 0; not independent annotations", "split":"official membership with audited exact-text exclusions", "excluded_conflicting_label_records":removed_conflicts, "excluded_train_dev_overlap_with_later_splits":excluded_overlap, "removed_same_split_duplicates":removed_duplicates}
+    removed_duplicates["test"]=0
+    audit = {"dataset":"brighter-dataset/BRIGHTER-emotion-intensities", "revision":revision, "input_hashes":hashes, "unit":"text snippet", "emotion_presence":"derived from Track B intensity > 0; not independent annotations", "split":"official dev/test membership and labels; earlier-split text overlaps removed", "excluded_conflicting_training_records":removed_conflicts["train"], "excluded_train_dev_overlap_with_later_splits":excluded_overlap, "removed_same_split_duplicates":removed_duplicates,"test_labels_used_for_cleaning":False}
     return save_dataset(output, splits, BRIGHTER_EMOTIONS, audit, sentiment=False)
 
 def load_dataset(path):

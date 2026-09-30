@@ -13,7 +13,7 @@ import time
 import importlib.metadata
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import BatchSampler, DataLoader, RandomSampler, SequentialSampler
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 from .config import load_config
 from .data import load_dataset
@@ -22,7 +22,7 @@ from .models import build_model, SoftSharing
 from .models.inherited import MultiTaskDataset
 from .losses import TaskLosses
 from .metrics import evaluate_predictions, selection_score, tune_threshold, majority_baseline
-from .diagnostics import capture
+from .diagnostics import capture_batches, select_probe
 
 class RecordsDataset(MultiTaskDataset):
     def __init__(self, records, tokenizer, max_length):
@@ -44,9 +44,26 @@ def seed_everything(seed):
 def move(batch,device):
     return {k:v.to(device) for k,v in batch.items()}
 
+class MergeSingletonTail(BatchSampler):
+    """Keep every example and avoid a size-one training batch for legacy BatchNorm."""
+    def __iter__(self):
+        batches=list(super().__iter__())
+        if len(batches)>1 and len(batches[-1])==1:
+            batches[-2].extend(batches.pop())
+        yield from batches
+
+    def __len__(self):
+        total=super().__len__()
+        return total-1 if total>1 and len(self.sampler)%self.batch_size==1 else total
+
 def make_loader(rows,tokenizer,config,shuffle=False):
     generator=torch.Generator().manual_seed(config["seed"])
-    return DataLoader(RecordsDataset(rows,tokenizer,config["max_length"]),batch_size=config["batch_size"],shuffle=shuffle,generator=generator,num_workers=config["num_workers"])
+    dataset=RecordsDataset(rows,tokenizer,config["max_length"])
+    if shuffle and len(dataset)>1 and config["batch_size"]>1:
+        sampler=RandomSampler(dataset,generator=generator)
+        batches=MergeSingletonTail(sampler,batch_size=config["batch_size"],drop_last=False)
+        return DataLoader(dataset,batch_sampler=batches,num_workers=config["num_workers"])
+    return DataLoader(dataset,batch_size=config["batch_size"],shuffle=shuffle,generator=generator,num_workers=config["num_workers"])
 
 def infer(model,rows,tokenizer,config,loss_fns=None):
     model.eval(); device=next(model.parameters()).device
@@ -118,8 +135,8 @@ def train(dataset, output, config):
     scheduler=get_linear_schedule_with_warmup(optimizer,int(total_steps*config["warmup_ratio"]),total_steps)
     run_manifest={"config":config,"environment":environment(),"dataset_manifest_sha256":sha256(Path(dataset)/"manifest.json"),"dataset_manifest":manifest,"status":"running","smoke":config["smoke"],"deterministic_algorithms":True,"parameters":sum(p.numel() for p in model.parameters()),"trainable_parameters":sum(p.numel() for p in model.parameters() if p.requires_grad),"train_records_used":len(rows),"dev_records_used":len(dev),"token_audit":{"train":token_audit(rows,tokenizer,config["max_length"]),"dev":token_audit(dev,tokenizer,config["max_length"])},"class_weights":{"emotion":loss_fns.em_weights.cpu().tolist(),"sentiment":loss_fns.sent_weights.cpu().tolist() if loss_fns.sent_weights is not None else None},"encoder_revision":getattr(encoder.config,"_commit_hash",None),"selection":"mean dev task macro-F1; intensity macro over emotions; emotion threshold selected on dev"}
     write_json(output/"manifest.json",run_manifest)
-    probe_rows=rows[:config["diagnostic_batch_size"]]
-    probe=move(next(iter(make_loader(probe_rows,tokenizer,config))),device)
+    probe_rows,probe_manifest=select_probe(rows,config["diagnostic_batch_size"])
+    write_json(output/"probe_manifest.json",probe_manifest|{"ids":[r["id"] for r in probe_rows]})
     best=-float("inf"); best_epoch=0; steps=0; history=[]; diagnostics=[]
     started=time.perf_counter(); diagnostic_seconds=0
     for epoch in range(1,config["epochs"]+1):
@@ -142,7 +159,10 @@ def train(dataset, output, config):
                 clip_gradients(model,config); optimizer.step(); scheduler.step(); optimizer.zero_grad(set_to_none=True); steps+=1
                 if steps>=total_steps:break
         if config["diagnostics"]:
-            t=time.perf_counter(); d=capture(model,probe,loss_fns,config); diagnostic_seconds+=time.perf_counter()-t
+            t=time.perf_counter()
+            probe_batches=(move(b,device) for b in make_loader(probe_rows,tokenizer,config))
+            d=capture_batches(model,probe_batches,loss_fns,config,[r["id"] for r in probe_rows])
+            diagnostic_seconds+=time.perf_counter()-t
             d.update(epoch=epoch,optimizer_steps=steps,probe_ids=[r["id"] for r in probe_rows]);diagnostics.append(d)
             write_jsonl(output/"diagnostics.jsonl",diagnostics)
         predictions,dev_losses=infer(model,dev,tokenizer,config,loss_fns)

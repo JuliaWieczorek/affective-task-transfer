@@ -1,6 +1,6 @@
 import csv
 import pytest
-from affective_task_transfer.data import assign_groups,validate_splits,meisd_records,prepare_brighter
+from affective_task_transfer.data import assign_groups,validate_splits,meisd_records,prepare_brighter,prepare_meisd
 from affective_task_transfer.io import read_jsonl,write_jsonl
 
 def test_duplicate_dialogue_union():
@@ -45,7 +45,7 @@ def test_onehot_uses_aligned_expanded_text(tmp_path):
     with pytest.raises(ValueError,match="supply the matching"):
         meisd_records(onehot,raw)
 
-def test_brighter_quarantines_conflicting_cross_split_text(tmp_path):
+def test_brighter_preserves_test_labels_and_removes_training_overlap(tmp_path):
     source=tmp_path/"source";source.mkdir()
     labels={"anger":0,"fear":0,"joy":0,"sadness":0,"surprise":0}
     splits={"train":[("stay",0),("collision",1),("stay",0)],"dev":[("development",1)],"test":[("collision",2),("held out",3)]}
@@ -55,6 +55,30 @@ def test_brighter_quarantines_conflicting_cross_split_text(tmp_path):
             for i,(text,intensity) in enumerate(items):
                 writer.writerow({"id":f"{split}-{i}","text":text,**(labels|{"joy":intensity})})
     manifest=prepare_brighter(source,tmp_path/"prepared")
-    assert [manifest["files"][s]["records"] for s in ("train","dev","test")]==[1,1,1]
-    assert manifest["audit"]["excluded_conflicting_label_records"]=={"train":1,"dev":0,"test":1}
+    assert [manifest["files"][s]["records"] for s in ("train","dev","test")]==[1,1,2]
+    assert manifest["audit"]["excluded_train_dev_overlap_with_later_splits"]["train"]==1
     assert manifest["audit"]["removed_same_split_duplicates"]["train"]==1
+    assert manifest["audit"]["test_labels_used_for_cleaning"] is False
+    assert [r["id"] for r in read_jsonl(tmp_path/"prepared/test.jsonl")]==["test-0","test-1"]
+
+def test_study_two_selects_start_half_with_dialogue_groups(tmp_path):
+    raw=tmp_path/"raw.csv";onehot=tmp_path/"onehot.csv";expanded=tmp_path/"expanded.csv"
+    with raw.open("w",encoding="utf-8",newline="") as f:
+        writer=csv.DictWriter(f,fieldnames=["dialog_ids","uttr_ids","Utterances"]);writer.writeheader()
+        for dialog in range(12):
+            writer.writerow({"dialog_ids":dialog,"uttr_ids":0,"Utterances":f"opening {dialog}"})
+            writer.writerow({"dialog_ids":dialog,"uttr_ids":1,"Utterances":f"ending {dialog}"})
+    with onehot.open("w",encoding="utf-8",newline="") as a,expanded.open("w",encoding="utf-8",newline="") as b:
+        w1=csv.DictWriter(a,fieldnames=["Utterances","original","mode","sentiment","emotion__joy","intensity__joy"])
+        w2=csv.DictWriter(b,fieldnames=["Utterances","original","mode","sentiment","augmented","segment","emotion1","intensity1"])
+        w1.writeheader();w2.writeheader()
+        for dialog in range(12):
+            for segment,word in (("start","opening"),("end","ending")):
+                text=f"{word} {dialog}"
+                w1.writerow({"Utterances":text,"original":"","mode":"","sentiment":"positive","emotion__joy":1,"intensity__joy":2})
+                w2.writerow({"Utterances":text,"original":"","mode":"","sentiment":"positive","augmented":"","segment":segment,"emotion1":"joy","intensity1":2})
+    manifest=prepare_meisd(onehot,raw,tmp_path/"prepared",expanded_path=expanded)
+    assert manifest["audit"]["prepared_segment"]=="start"
+    assert manifest["audit"]["source_half_counts"]=={"start":12,"end":12}
+    assert sum(manifest["files"][s]["records"] for s in ("train","dev","test"))==12
+    assert all(r["segment"]=="start" for s in ("train","dev","test") for r in read_jsonl(tmp_path/f"prepared/{s}.jsonl"))
