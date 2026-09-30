@@ -5,7 +5,7 @@ from .config import load_config
 from .io import read_json, write_json
 
 def main():
-    parser=argparse.ArgumentParser(description="Chapter 5 task-transfer experiments")
+    parser=argparse.ArgumentParser(description="Affective task-transfer experiments")
     sub=parser.add_subparsers(dest="command",required=True)
     p=sub.add_parser("audit-data");p.add_argument("--csv",required=True);p.add_argument("--raw-meisd",required=True);p.add_argument("--expanded");p.add_argument("--output",required=True)
     p=sub.add_parser("prepare-meisd");p.add_argument("--csv",required=True);p.add_argument("--raw-meisd",required=True);p.add_argument("--expanded");p.add_argument("--output",required=True);p.add_argument("--split-seed",type=int,default=2026)

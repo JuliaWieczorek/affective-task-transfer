@@ -1,28 +1,32 @@
 # Affective Task Transfer
 
-Replikacja i rozszerzenie badania z rozdziału 5: wspólne uczenie rozpoznawania wielu emocji, intensywności obecnych emocji i sentymentu. Projekt powstał przez migrację kodu z [`mtl-emotion-intensity-sentiment`](https://github.com/JuliaWieczorek/mtl-emotion-intensity-sentiment) na commicie `b5d8aaae5266229970b641f0b3b2e6e6da8607ea`. Oryginalne modele i ich pochodzenie są zapisane w `src/affective_task_transfer/models/inherited.py` oraz `docs/provenance.json`. Poprawki protokołu znajdują się w osobnych modułach.
+**A refactored and extended research implementation** of the system described in *Multi-Task Aware Learning for Joint Emotion, Intensity, and Sentiment Analysis*. This repository builds on the paper's [original `mtl-emotion-intensity-sentiment` codebase](https://github.com/JuliaWieczorek/mtl-emotion-intensity-sentiment). It carries forward the existing models, backbones, tasks, and main comparisons while improving data preparation, evaluation, and reproducibility and adding analyses of task interaction.
 
-## Cel badania
+The model classes were migrated from source commit `b5d8aaae5266229970b641f0b3b2e6e6da8607ea`; they were not reimplemented from scratch. Their source locations and hashes are recorded in [`docs/provenance.json`](docs/provenance.json). Protocol changes are implemented in separate modules and described in [`docs/IMPLEMENTATION_AUDIT.md`](docs/IMPLEMENTATION_AUDIT.md).
 
-Porównujemy STL, wszystkie pary zadań oraz model trzyzadaniowy na MEISD. Zachowujemy historyczne rodziny architektur: hard sharing, soft sharing, adapters, MMoE, BERT-LSTM i cross-stitch, oraz cztery historyczne backbone'y: BERT uncased/cased, RoBERTa i XLM-R. Domyślny plan obejmuje pięć seedów (42, 52, 62, 72, 82). Zewnętrzny eksperyment na BRIGHTER English sprawdza tylko wspólne zadania: emocje i intensywność. Zbiór ten nie ma etykiet sentymentu; obecność emocji jest wyprowadzona z intensywności większej od zera.
+## Research scope
 
-Raporty obejmują accuracy, precision, recall, F1, macierze pomyłek, wyniki per klasa i zadanie, a także straty, normy i cosinusy gradientów oraz routing MMoE. Positive/negative transfer oznacza zmianę metryki względem sparowanego STL na tym samym zbiorze, backbone'ie, podziale i seedzie. Diagnostyki mogą wskazać mechanizm współdzielenia, ale same nie dowodzą przyczynowości.
+The primary study uses MEISD to compare single-task learning (STL), all three two-task combinations, and joint emotion, emotion-conditioned intensity, and sentiment learning. The experiment matrix retains six model families: hard sharing, soft sharing, adapters, MMoE, BERT-LSTM, and cross-stitch. It supports the four backbones used in the earlier project: BERT uncased, BERT cased, RoBERTa, and XLM-R. Each planned condition uses five seeds: 42, 52, 62, 72, and 82.
 
-Nie obejmujemy prognozowania, krzywych wielkości danych ani nowych metod augmentacji. Pełnych kosztownych eksperymentów nie uruchomiono; zaplanowane są po weryfikacji kodu i kosztu na docelowym komputerze. Stare repozytorium i wyniki nie są zmieniane.
+An external study uses [BRIGHTER English Track B](https://huggingface.co/datasets/brighter-dataset/BRIGHTER-emotion-intensities) to examine emotion and intensity on a separate corpus. BRIGHTER has no sentiment labels. For this track, emotion presence is derived from an intensity greater than zero; the two labels are therefore related by construction. The BRIGHTER experiment retrains models on that corpus and does not claim zero-shot transfer from MEISD.
 
-## Dane i ważny wynik audytu
+Outputs include accuracy, precision, recall, F1, confusion matrices, and results by task and class. Training logs also record task losses, gradient norms and cosine similarities on a fixed training probe, and MMoE routing. Positive or negative transfer is assessed against a matched STL run with the same dataset, backbone, split, and seed. These diagnostics help examine shared optimization; they do not by themselves establish a causal flow of knowledge between tasks.
 
-Źródła lokalne są w `data/source/meisd/`, archiwum i identyczna kopia jednego CSV w `data/archive/`. `data/` jest wyłączony z Git ze względu na wielkość i pochodzenie danych. Skróty SHA-256 są w `docs/data_audit.json` i w manifeście przygotowanego zbioru.
+Forecasting, training-set-size curves, and new augmentation methods are outside this project's scope. The full experiment matrix has not been run; those runs are reserved for the target computer after implementation review and runtime estimation. The earlier repository and its results remain intact.
 
-`multilabel_augmented_onehot_11222025.csv` ma 4219 wierszy, z czego 2608 ma `mode=llm` i puste `Utterances`. Dopasowany wiersz po wierszu `MEISD_balanced_expanded.csv` zawiera wszystkie 2608 tekstów w `augmented`. Adapter danych wymaga zgodności tekstu oryginalnego, rodzica, trybu, kolejności oraz etykiet w slotach przed połączeniem tekstu z etykietami one-hot. Sam plik one-hot nie wystarcza do odtworzenia augmentacji. W historycznym loaderze puste pole tekstowe powodowało użycie `original`, czyli ponowne podanie tekstu źródłowego. W konwersji poprawiono też 83 etykiety `positve` na `positive`. Dla 216 powtarzających się emocji ze sprzeczną intensywnością maskujemy tylko niejednoznaczną intensywność.
+## Data audit and layout
 
-Jednostką MEISD jest historyczna *połówka dialogu*. Wszystkie 1611 oryginalnych tekstów da się odtworzyć z `MEISD_text.csv`, grupując wypowiedzi według `dialog_ids` i dzieląc w połowie. Podział 70/15/15 jest deterministyczny według dialogów, a identyczne teksty łączą grupy przed losowaniem. Dev i test zawierają tylko oryginały. Wszystkie augmentacje dziecka należą do grupy dialogu rodzica; do train trafiają tylko dzieci rodziców w train. Rekordy o tym samym tekście z rozbieżnymi etykietami są wykluczane, a identyczne kopie usuwane. To nowy podział, więc jego wyniki nie są bezpośrednią repliką historycznej tabeli walidacyjnej. Historyczne filtrowanie klas i odziedziczone etykiety pozostają ograniczeniami.
+Local source files are under `data/source/meisd/`; the supplied archive and an identical duplicate CSV are under `data/archive/`. The `data/` directory is excluded from Git. File hashes and transfer instructions are in [`docs/DATA_LAYOUT.md`](docs/DATA_LAYOUT.md).
 
-BRIGHTER English pobieramy z [oficjalnego zbioru Track B](https://huggingface.co/datasets/brighter-dataset/BRIGHTER-emotion-intensities) z przypiętym hashem rewizji i zachowaniem przynależności do oficjalnych train/dev/test. Audyt wyklucza 14 wierszy o identycznym tekście i sprzecznych etykietach oraz dwie zgodne kopie w train. [Opis zadania SemEval](https://github.com/emotion-analysis-project/semeval2025-task11) podaje klasy 0 (brak), 1 (niska), 2 (umiarkowana), 3 (wysoka) i pięć emocji dla języka angielskiego.
+The supplied `multilabel_augmented_onehot_11222025.csv` contains 4,219 rows. All 2,608 rows marked `mode=llm` have empty `Utterances`. The matching `MEISD_balanced_expanded.csv` contains their actual generated texts in `augmented`. Preparation checks row alignment and label conversion before joining the texts to the one-hot labels. It also masks 216 ambiguous intensity labels where repeated slots assign different intensities to the same emotion. The existing augmentations are reused; none are generated again.
 
-## Instalacja i przygotowanie
+MEISD examples are historical dialogue halves. The split groups related halves by source dialogue and joins groups that share exact normalized text. Augmentations can enter training only when their parent belongs to training; development and test contain originals only. Conflicting duplicate labels are excluded. The prepared split has 2,877 training, 231 development, and 247 test examples.
 
-Python 3.11+; na Windows sprawdzono `torch==2.6.0+cpu` i `transformers==4.49.0`. Do eksperymentów GPU należy zainstalować kompatybilną wersję PyTorch dla docelowego CUDA.
+BRIGHTER is downloaded at a recorded revision using its official train/development/test membership. The audit excludes 14 records with identical text but conflicting labels and two redundant training copies, leaving 2,753/115/2,759 examples. These exclusions must be reported when comparing against the unfiltered official benchmark. The [SemEval task description](https://github.com/emotion-analysis-project/semeval2025-task11) defines five English emotions and intensity levels 0 (absent) through 3 (high).
+
+## Install and prepare
+
+Python 3.11 or newer is required. The Windows CPU verification used PyTorch 2.6 and Transformers 4.49; install a compatible PyTorch build for the target GPU.
 
 ```powershell
 python -m venv .venv
@@ -33,9 +37,9 @@ python -m venv .venv
 .\.venv\Scripts\att.exe prepare-brighter --input data/source/brighter --output data/prepared/brighter-v1
 ```
 
-`--expanded` jest opcjonalne tylko wtedy, gdy dopasowany plik leży obok CSV one-hot. Jeśli wiersze augmentowane nie mają tekstu i pliku nie ma, przygotowanie kończy się błędem.
+The `--expanded` argument may be omitted when the matching file is beside the one-hot CSV. Preparation fails if augmented rows lack text and the expanded file is unavailable. Dataset manifests and run directories are never overwritten silently.
 
-## Weryfikacja i eksperymenty
+## Verify and plan experiments
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
@@ -46,6 +50,8 @@ $env:PYTHONPATH="src"
 .\.venv\Scripts\att.exe make-matrix --dataset data/prepared/brighter-v1 --dataset-name brighter --output outputs/matrix-brighter
 ```
 
-Macierze są planami; samo ich utworzenie niczego nie trenuje. MEISD ma 240 konfiguracji, BRIGHTER 160. `att run-matrix --matrix outputs/matrix-meisd-v2/matrix.json` uruchamia pełny plan, a `--limit N` pierwsze N konfiguracji. Poszczególny run można wykonać przez `att train --config <plik.json>`. Po wybraniu checkpointu wyłącznie według dev wykonaj `att evaluate-matrix --matrix outputs/matrix-meisd-v2/matrix.json --split test` oraz analogicznie dla BRIGHTER. Pojedyncza ewaluacja: `att evaluate --dataset <przygotowany_zbior> --run <katalog_run> --split test`. Raport: `att report --runs outputs --output outputs/report --split test`. Tryb smoke używa małego losowego BERT, małych podzbiorów i jawnej flagi; jego wyniki nie są naukową oceną modeli.
+Creating the matrices does not train models. They contain 240 MEISD and 160 BRIGHTER configurations. After estimating cost on the target computer, `att run-matrix --matrix outputs/matrix-meisd-v2/matrix.json` starts the MEISD runs; `--limit N` restricts the command to the first N configurations. The same command applies to the BRIGHTER matrix.
 
-Każdy run zapisuje konfigurację, wersje bibliotek, hash danych, seed, liczbę kroków, czas, checkpoint, predykcje i metryki. Raport agreguje wyniki po seedach oraz sparowane zmiany względem STL. Do pracy na drugim komputerze przenieś trzy pliki MEISD opisane w `docs/DATA_LAYOUT.md`; BRIGHTER pobiera CLI. Szczegóły audytu, pochodzenia i ograniczeń: `docs/IMPLEMENTATION_AUDIT.md`, `docs/provenance.json`; pierwotny plan pozostaje w `docs/INITIAL_PLAN_2026-09-28.md`.
+Checkpoint selection and the emotion threshold use development data. Once the runs are reviewed, use `att evaluate-matrix --matrix outputs/matrix-meisd-v2/matrix.json --split test` and the corresponding BRIGHTER command. Generate tables and plots with `att report --runs outputs --output outputs/report --split test`. The smoke script uses a small randomly initialized BERT to check the pipeline; its scores are not research results.
+
+Each run records configuration, library versions, dataset hashes, seed, training time and steps, selected checkpoint, predictions, and metrics. Reports include per-seed results, paired differences from STL, class-level results, confusion matrices, learning curves, gradient diagnostics, routing, and resource use. See [`docs/RUN_HANDOFF.md`](docs/RUN_HANDOFF.md) for the target-computer workflow.
