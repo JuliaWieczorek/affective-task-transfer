@@ -1,5 +1,9 @@
 # Affective Task Transfer
 
+## Dissertation relationship
+
+This repository supports Study II of Chapter 5, *Task-Level Knowledge Transfer for Joint Emotion, Intensity, and Sentiment Analysis*, of the PhD dissertation *Knowledge Transfer for Emotion Intensity Prediction in Mental Health Support Dialogues*. It extends the code for *Multi-Task Aware Learning for Joint Emotion, Intensity, and Sentiment Analysis*; the paper's historical comparison is Study I.
+
 **A refactored and extended research implementation** of the system described in *Multi-Task Aware Learning for Joint Emotion, Intensity, and Sentiment Analysis*. This repository builds on the paper's [original `mtl-emotion-intensity-sentiment` codebase](https://github.com/JuliaWieczorek/mtl-emotion-intensity-sentiment). It carries forward the existing models, backbones, tasks, and main comparisons while improving data preparation, evaluation, and reproducibility and adding analyses of task interaction.
 
 The model classes were migrated from source commit `b5d8aaae5266229970b641f0b3b2e6e6da8607ea`; they were not reimplemented from scratch. Their source locations and hashes are recorded in [`docs/provenance.json`](docs/provenance.json). Protocol changes are implemented in separate modules and described in [`docs/IMPLEMENTATION_AUDIT.md`](docs/IMPLEMENTATION_AUDIT.md).
