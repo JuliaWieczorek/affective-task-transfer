@@ -10,7 +10,8 @@ wybierz nową nazwę.
 
 ## Stan potwierdzony 1 października
 
-- Pełna jedna epoka BRIGHTER `hard_sharing` z prawdziwym BERT, partią 16:
+- Pełna jedna epoka BRIGHTER `hard_sharing` z prawdziwym BERT, partią 16
+  i historycznym limitem **128 tokenów**:
   172 kroki, **89,2 s** (z walidacją, diagnostyką i zapisem checkpointu),
   **3,86 GiB** szczytowo przydzielonej pamięci GPU, **1,7 s**
   diagnostyki. Checkpoint 419 MiB daje się odczytać, jego hash jest zgodny
@@ -23,14 +24,13 @@ wybierz nową nazwę.
 - Lokalne `pytest -q`: 27 testów zaliczonych; `pip check`: bez konfliktów.
   Na komputerze GPU działał Python 3.12.2, PyTorch 2.9.1+rocm7.2.1
   i AMD Radeon RX 9070. Zmiany z `gpu-rocm-check` są już w `main` (PR #1).
-- Prosta, liniowa ekstrapolacja jednej próby na 80 runów daje **5,4–10,8 h**
-  dla 3–6 epok. Roboczy zakres **15–35 h** zakłada stabilną pamięć i
-  podobną wydajność; wcześniejsze **40–100 h** to możliwy scenariusz
-  spowolnień, OOM i powtórek. Jedna architektura nie wystarcza do
-  zatwierdzenia harmonogramu.
-- Checkpointy pełnej macierzy mogą zająć około **45 GiB** (55 runów z
+- **Nowy protokół używa 192 tokenów.** Powyższe 89,2 s oraz wcześniejsze
+  oszacowania czasu dla 128 tokenów są tylko punktem odniesienia;
+  harmonogram trzeba wyliczyć na nowo z prób przy 192 tokenach.
+- Końcowe checkpointy pełnej macierzy mogą zająć około **45 GiB** (55 runów z
   jednym, 20 z dwoma i 5 z trzema encoderami). Planuj **45–60 GiB**
-  plus cache, predykcje i archiwum. Na komputerze GPU brakowało jeszcze
+  plus cache, predykcje, archiwum i przejściowy checkpoint umożliwiający
+  wznowienie bieżącego runu. Na komputerze GPU brakowało jeszcze
   trzech plików źródłowych MEISD.
 
 ## 1. Komputer, kod, środowisko
@@ -94,7 +94,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Kontrola ROCm/GPU nie przeszła' }
 ```
 
 Zielone: AMD Radeon RX 9070, sprawdzony build ROCm, wszystkie testy
-zielone i brak konfliktów. Po zmianie kodu lub pakietów ponów pomiary.
+zielone i brak konfliktów. Nowy manifest runu powinien zapisać
+`environment.hip`, nazwę GPU i pamięć. Po zmianie kodu lub pakietów
+ponów pomiary.
 
 ## 2. Dane MEISD i BRIGHTER
 
@@ -179,10 +181,32 @@ for name, counts in expected.items():
 if ($LASTEXITCODE -ne 0) { throw 'Kontrola danych nie przeszła' }
 ```
 
+Przed interpretacją etykiet przejrzyj lokalny arkusz 80 przykładów z
+**train**: po 20 oryginałów i augmentacji z każdej strony historycznego
+limitu 128 tokenów. Zawiera tekst źródłowy i użyty tekst, etykiety oraz
+puste kolumny dla oceny człowieka. Nie zawiera przykładów testowych.
+Plik `data/audit/` pozostaje poza Git. Jeżeli na docelowym komputerze
+arkusza brak, utwórz go tak samo:
+
+```powershell
+if (-not (Test-Path 'data/audit/study2-label-review.csv')) {
+    & .\.venv\Scripts\att.exe sample-label-audit --dataset data/prepared/meisd-study2-v1 --output data/audit/study2-label-review.csv --seed 2026 --per-stratum 20
+    if ($LASTEXITCODE -ne 0) { throw 'Nie utworzono próbki do audytu etykiet' }
+}
+Get-Content data/audit/study2-label-review.manifest.json
+```
+
+Zanotuj datę i osobę oceniającą, przypadki niepewne oraz rozbieżności
+między tekstem a emocją, intensywnością, sentymentem i odziedziczoną
+etykietą augmentacji. Jeśli błędy układają się w powtarzalny wzór,
+wstrzymaj interpretację wyniku i ustal wpływ na protokół **przed**
+odczytaniem testu. Arkusz nie jest automatycznym potwierdzeniem etykiet.
+
 ## 3. Pełnoepokowe próby GPU przed macierzą
 
-Istniejąca próba BRIGHTER `hard_sharing` jest jedną pełną epoką przy
-partii 16. Sprawdź ją, zamiast ponawiać bez potrzeby:
+Istniejąca próba BRIGHTER `hard_sharing` jest poprawną próbą przy 128
+tokenach. Sprawdź jej archiwum, ale **nie używaj jej do oszacowania
+nowego protokołu 192-tokenowego**:
 
 ```powershell
 $oldRun = 'outputs/preflight-brighter-hard-sharing-2026-10-01'
@@ -191,8 +215,9 @@ $oldHash = (Get-FileHash (Join-Path $oldRun 'best_model.pt') -Algorithm SHA256).
 if ($oldManifest.status -ne 'trained' -or $oldManifest.optimizer_steps -ne 172 -or $oldHash -ne $oldManifest.checkpoint_sha256) { throw 'Archiwalna próba jest niekompletna' }
 ```
 
-Uruchom **10 dalszych prób po jednej pełnej epoce**. Każda używa
-całego train/dev, prawdziwego BERT, partii 16 i osobnego katalogu.
+Uruchom **11 prób po jednej pełnej epoce**. Każda używa
+całego train/dev, prawdziwego BERT, partii 16, limitu 192 tokenów
+i osobnego katalogu.
 Najpierw idzie najtrudniejszy pamięciowo MEISD `soft_sharing` z trzema
 zadaniami. `matched_stl` i dwuzadaniowy soft sharing są potrzebne do
 oszacowania całej macierzy. `scripts/smoke.py` wymusza CPU i nie nadaje
@@ -213,6 +238,7 @@ $cases = @(
     @{ name='meisd-adapters'; dataset='meisd'; arch='adapters'; tasks=@('sentiment','emotion','intensity'); diagnostics=$true }
     @{ name='meisd-mmoe'; dataset='meisd'; arch='mmoe'; tasks=@('sentiment','emotion','intensity'); diagnostics=$true }
     @{ name='brighter-soft'; dataset='brighter'; arch='soft_sharing'; tasks=@('emotion','intensity'); diagnostics=$true }
+    @{ name='brighter-hard'; dataset='brighter'; arch='hard_sharing'; tasks=@('emotion','intensity'); diagnostics=$true }
     @{ name='brighter-stl-intensity'; dataset='brighter'; arch='matched_stl'; tasks=@('intensity'); diagnostics=$false }
     @{ name='brighter-adapters'; dataset='brighter'; arch='adapters'; tasks=@('emotion','intensity'); diagnostics=$true }
     @{ name='brighter-mmoe'; dataset='brighter'; arch='mmoe'; tasks=@('emotion','intensity'); diagnostics=$true }
@@ -220,7 +246,7 @@ $cases = @(
 foreach ($case in $cases) {
     $cfg = @{ backbone='bert-base-uncased'; architecture=$case.arch; tasks=$case.tasks;
         seed=42; dataset=$datasets[$case.dataset]; output=(Join-Path $pilotRoot $case.name);
-        device='cuda'; smoke=$true; epochs=1; batch_size=16;
+        device='cuda'; smoke=$true; epochs=1; batch_size=16; max_length=192;
         diagnostics=$case.diagnostics; diagnostic_batch_size=32 }
     [System.IO.File]::WriteAllText((Join-Path $configDir ($case.name + '.json')),
         ($cfg | ConvertTo-Json -Depth 8), [System.Text.UTF8Encoding]::new($false))
@@ -239,8 +265,7 @@ diagnostykę; MMoE dodatkowo `routing`. Przy OOM, NaN/Inf lub
 niekompletnym checkpointcie **wstrzymaj macierz**.
 
 Po wszystkich próbach sprawdź zawartość historii i diagnostyk, także
-sumę wag bramek MMoE. Ten blok obejmuje również wcześniejszą próbę
-BRIGHTER hard sharing:
+sumę wag bramek MMoE:
 
 ```powershell
 @'
@@ -256,12 +281,12 @@ cases = {
     "meisd-adapters": ("meisd", True),
     "meisd-mmoe": ("meisd", True),
     "brighter-soft": ("brighter", True),
+    "brighter-hard": ("brighter", True),
     "brighter-stl-intensity": ("brighter", False),
     "brighter-adapters": ("brighter", True),
     "brighter-mmoe": ("brighter", True),
 }
 pilots = [(root / name, dataset, diagnostic) for name, (dataset, diagnostic) in cases.items()]
-pilots.append((Path("outputs/preflight-brighter-hard-sharing-2026-10-01"), "brighter", True))
 
 def finite_tree(value):
     if isinstance(value, dict):
@@ -274,6 +299,7 @@ for run, dataset, expected_diagnostics in pilots:
     manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
     expected_steps = 87 if dataset == "meisd" else 172
     assert manifest["status"] == "trained" and manifest["smoke"], run
+    assert manifest["config"]["max_length"] == 192, (run, "max length")
     assert manifest["optimizer_steps"] == expected_steps, (run, "steps")
     history = [json.loads(line) for line in (run / "history.jsonl").read_text(encoding="utf-8").splitlines()]
     assert len(history) == 1 and finite_tree(history[0]), (run, "history")
@@ -315,7 +341,7 @@ foreach ($case in $learningCases) {
     $cfg = @{ backbone='bert-base-uncased'; architecture=$case.arch; tasks=$case.tasks;
         seed=42; dataset='data/prepared/brighter-study2-v1';
         output=(Join-Path $learningRoot $case.name); device='cuda'; smoke=$true;
-        epochs=6; batch_size=16; diagnostics=$case.diagnostics; diagnostic_batch_size=32 }
+        epochs=6; batch_size=16; max_length=192; diagnostics=$case.diagnostics; diagnostic_batch_size=32 }
     [System.IO.File]::WriteAllText((Join-Path $learningDir ($case.name + '.json')),
         ($cfg | ConvertTo-Json -Depth 8), [System.Text.UTF8Encoding]::new($false))
     & .\.venv\Scripts\att.exe train --config (Join-Path $learningDir ($case.name + '.json'))
@@ -361,7 +387,7 @@ $paths = @{
     meisd_adapters=(Join-Path $pilotRoot 'meisd-adapters')
     meisd_mmoe=(Join-Path $pilotRoot 'meisd-mmoe')
     brighter_stl=(Join-Path $pilotRoot 'brighter-stl-intensity')
-    brighter_hard='outputs/preflight-brighter-hard-sharing-2026-10-01'
+    brighter_hard=(Join-Path $pilotRoot 'brighter-hard')
     brighter_soft=(Join-Path $pilotRoot 'brighter-soft')
     brighter_adapters=(Join-Path $pilotRoot 'brighter-adapters')
     brighter_mmoe=(Join-Path $pilotRoot 'brighter-mmoe')
@@ -371,7 +397,8 @@ $pilotRows = foreach ($key in $paths.Keys) {
     $run = $paths[$key]
     $m = Get-Content (Join-Path $run 'manifest.json') -Raw | ConvertFrom-Json
     if ($m.status -ne 'trained' -or -not $m.smoke -or $m.config.batch_size -ne 16 -or
-        $null -eq $m.peak_cuda_bytes -or $m.elapsed_seconds -le 0) {
+        $m.config.max_length -ne 192 -or -not $m.environment.hip -or -not $m.environment.gpu.name -or
+        $null -eq $m.peak_cuda_bytes -or $m.resumable_checkpoint_bytes -le 0 -or $m.elapsed_seconds -le 0) {
         throw "Niekompletna próba: $key"
     }
     $checkpoint = Join-Path $run 'best_model.pt'
@@ -385,6 +412,7 @@ $pilotRows = foreach ($key in $paths.Keys) {
         EpochSeconds=[math]::Round($m.elapsed_seconds,1);
         DiagnosticsSeconds=[math]::Round($m.diagnostic_seconds,1);
         PeakVRAMGiB=[math]::Round($m.peak_cuda_bytes/1GB,2);
+        ResumeCheckpointGiB=[math]::Round($m.resumable_checkpoint_bytes/1GB,2);
         CheckpointMiB=[math]::Round((Get-Item $checkpoint).Length/1MB,1) }
 }
 $pilotRows | Sort-Object Case | Format-Table -AutoSize
@@ -416,7 +444,9 @@ i ustal harmonogram lub zakres przed oceną testu. Zapisz tabelę
 - [ ] Trzy źródłowe SHA-256 MEISD są dokładne; oba manifesty mają
   1378/118/118 i 2753/115/2765, właściwą rewizję, `start` dla MEISD,
   dev/test bez augmentacji i brak przenikania grup/tekstów.
-- [ ] Archiwalny BRIGHTER hard sharing i 10 nowych prób mają
+- [ ] Ustalono limit **192 tokenów**, odnotowano wynik ręcznej oceny
+  próbki etykiet i decyzję o ewentualnych przypadkach spornych.
+- [ ] Wszystkie 11 nowych prób przy 192 tokenach mają
   `status=trained`, checkpoint zgodny z hashem, finite straty,
   diagnostykę i routing MMoE. Wszystkie mieszczą się przy partii 16.
 - [ ] MEISD soft sharing z trzema zadaniami przeszedł. Szczyt
@@ -426,7 +456,8 @@ i ustal harmonogram lub zakres przed oceną testu. Zapisz tabelę
   potwierdzono, że nie wynika z błędu danych/maski/straty. Nie wymagamy
   arbitralnego progu F1: rzetelny negatywny wynik jest dopuszczalny.
 - [ ] Na `D:` jest co najmniej 100 GiB, na `C:` co najmniej 10 GiB,
-  a `PlanningHours <= 40`. Zaplanowano kontrolę miejsca i archiwizację.
+  a `PlanningHours <= 40`. Manifesty zapisują HIP i GPU; zaplanowano
+  kontrolę miejsca i archiwizację.
 
 **Żółte — najpierw wyjaśnij:** `low` nadal dominuje po kilku epokach
 w jednym modelu, 80–90% VRAM, czasy pilotów są niestabilne lub brak
@@ -436,7 +467,8 @@ zapisu HIP/GPU. Słaby F1 sam w sobie nie jest automatycznym `no-go`.
 splitów, CPU zamiast GPU, nieudane testy, OOM, NaN/Inf, niekompletny
 checkpoint/diagnostyka, kolaps intensywności w obu dłuższych próbach
 bez wyjaśnienia, niewystarczający dysk lub `PlanningHours > 40` bez
-zmienionego planu. Jeśli partia 16 nie mieści się w VRAM, ustal nową
+zmienionego planu. Powtarzalna niezgodność odziedziczonych etykiet z
+tekstem wymaga decyzji o zakresie twierdzeń. Jeśli partia 16 nie mieści się w VRAM, ustal nową
 partię i akumulację, zapisz zmianę protokołu i ponów pomiary **przed**
 wygenerowaniem oficjalnej macierzy.
 
@@ -454,6 +486,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Nie utworzono macierzy BRIGHTER' }
 $m = Get-Content outputs/matrix-meisd-study2-2026-10-02/matrix.json -Raw | ConvertFrom-Json
 $b = Get-Content outputs/matrix-brighter-study2-2026-10-02/matrix.json -Raw | ConvertFrom-Json
 if ($m.runs -ne 50 -or $b.runs -ne 30 -or -not $m.primary_scope -or -not $b.primary_scope) { throw 'Nieprawidłowy zakres macierzy' }
+$configs = @(Get-ChildItem outputs/matrix-meisd-study2-2026-10-02/*.json | Where-Object Name -ne 'matrix.json') + @(Get-ChildItem outputs/matrix-brighter-study2-2026-10-02/*.json | Where-Object Name -ne 'matrix.json')
+if ($configs.Count -ne 80 -or @($configs | Where-Object { (Get-Content $_.FullName -Raw | ConvertFrom-Json).max_length -ne 192 }).Count) { throw 'Macierz nie używa 192 tokenów' }
 git rev-parse HEAD
 ```
 
@@ -466,9 +500,25 @@ kontroli przedstartowej**:
 & .\.venv\Scripts\att.exe run-matrix --matrix outputs/matrix-brighter-study2-2026-10-02/matrix.json
 ```
 
-`run-matrix` pomija ukończone, zgodne przebiegi, ale zatrzymuje się na
-niekompletnym katalogu. Nie kasuj go automatycznie. Ocenę testową
-i raport wykonaj dopiero po przeglądzie całej zaplanowanej macierzy.
+`run-matrix` sprawdza ukończone checkpointy i wznawia zgodny, przerwany
+run z ostatniej zapisanej epoki. Częściowo wykonana epoka jest liczona
+ponownie. `history.jsonl` i `diagnostics.jsonl` zapisują wyniki w trakcie,
+a przejściowy `last_epoch.pt` zawiera model, optymalizator, scheduler
+i stan losowości; po ukończeniu runu jest usuwany. Nie kasuj katalogu
+po błędzie. Ocenę testową i raport wykonaj dopiero po przeglądzie całej
+zaplanowanej macierzy:
+
+```powershell
+& .\.venv\Scripts\att.exe evaluate-matrix --matrix outputs/matrix-meisd-study2-2026-10-02/matrix.json --split test
+if ($LASTEXITCODE -ne 0) { throw 'Niekompletna ocena MEISD' }
+& .\.venv\Scripts\att.exe evaluate-matrix --matrix outputs/matrix-brighter-study2-2026-10-02/matrix.json --split test
+if ($LASTEXITCODE -ne 0) { throw 'Niekompletna ocena BRIGHTER' }
+& .\.venv\Scripts\att.exe report --matrices outputs/matrix-meisd-study2-2026-10-02/matrix.json outputs/matrix-brighter-study2-2026-10-02/matrix.json --expected-runs 80 --output outputs/report-study2 --split test
+if ($LASTEXITCODE -ne 0) { throw 'Niekompletny raport' }
+```
+
+Raport wymaga dokładnie wskazanych macierzy, wszystkich wyników testu,
+zgodnych konfiguracji i hashy. Nie skanuje przypadkowych pilotów.
 Archiwizuj `outputs/` osobno od Git; pełnych checkpointów nie commituj.
 Dodatkowe backbone'y, architektury historyczne i ablacje wymagają
 oddzielnego planu czasu i miejsca.

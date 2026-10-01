@@ -11,6 +11,7 @@ def main():
     p=sub.add_parser("prepare-meisd");p.add_argument("--csv",required=True);p.add_argument("--raw-meisd",required=True);p.add_argument("--expanded");p.add_argument("--output",required=True);p.add_argument("--split-seed",type=int,default=2026);p.add_argument("--include-end-halves",action="store_true",help="Historical two-half comparison; Study II uses start only")
     p=sub.add_parser("download-brighter");p.add_argument("--output",required=True)
     p=sub.add_parser("prepare-brighter");p.add_argument("--input",required=True);p.add_argument("--output",required=True)
+    p=sub.add_parser("sample-label-audit");p.add_argument("--dataset",required=True);p.add_argument("--output",required=True);p.add_argument("--backbone",default="bert-base-uncased");p.add_argument("--seed",type=int,default=2026);p.add_argument("--per-stratum",type=int,default=20)
     p=sub.add_parser("train");p.add_argument("--config",required=True);p.add_argument("--dataset");p.add_argument("--output")
     p=sub.add_parser("evaluate");p.add_argument("--dataset",required=True);p.add_argument("--run",required=True);p.add_argument("--split",choices=["dev","test"],default="test")
     p=sub.add_parser("make-matrix");p.add_argument("--dataset",required=True);p.add_argument("--dataset-name",choices=["meisd","brighter"],required=True);p.add_argument("--output",required=True);p.add_argument("--ablations",action="store_true");p.add_argument("--historical-stl",action="store_true")
@@ -18,7 +19,7 @@ def main():
     p.add_argument("--legacy-architectures",action="store_true",help="Also include BERT-LSTM and cross-stitch; excluded from primary Study II.")
     p=sub.add_parser("run-matrix");p.add_argument("--matrix",required=True);p.add_argument("--limit",type=int)
     p=sub.add_parser("evaluate-matrix");p.add_argument("--matrix",required=True);p.add_argument("--split",choices=["dev","test"],default="test");p.add_argument("--limit",type=int)
-    p=sub.add_parser("report");p.add_argument("--runs",required=True);p.add_argument("--output",required=True);p.add_argument("--split",choices=["dev","test"],default="test");p.add_argument("--allow-smoke",action="store_true")
+    p=sub.add_parser("report");p.add_argument("--runs",default="outputs");p.add_argument("--matrices",nargs="+");p.add_argument("--expected-runs",type=int);p.add_argument("--output",required=True);p.add_argument("--split",choices=["dev","test"],default="test");p.add_argument("--allow-smoke",action="store_true")
     args=parser.parse_args()
     if args.command in ("audit-data","prepare-meisd"):
         from .data import meisd_records,prepare_meisd
@@ -33,6 +34,9 @@ def main():
         provenance=Path(args.input)/"download_manifest.json"
         revision=read_json(provenance)["revision"] if provenance.exists() else None
         result=prepare_brighter(args.input,args.output,revision)
+    elif args.command=="sample-label-audit":
+        from .label_audit import sample_label_audit
+        result=sample_label_audit(args.dataset,args.output,args.backbone,args.seed,args.per_stratum)
     elif args.command=="train":
         from .training import train
         config=load_config(args.config)
@@ -51,7 +55,7 @@ def main():
         result=evaluate_matrix(args.matrix,args.split,args.limit)
     elif args.command=="report":
         from .reporting import report
-        result=report(args.runs,args.output,args.split,args.allow_smoke)
+        result=report(args.runs,args.output,args.split,args.allow_smoke,args.matrices,args.expected_runs)
     print(json.dumps(result,indent=2,ensure_ascii=False,allow_nan=False))
 
 if __name__=="__main__":main()

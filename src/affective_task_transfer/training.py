@@ -100,18 +100,46 @@ def token_audit(rows,tokenizer,max_length):
     return {"records":len(rows),"max_tokens":max(lengths),"mean_tokens":float(np.mean(lengths)),"truncated_records":sum(n>max_length for n in lengths),"truncated_fraction":sum(n>max_length for n in lengths)/len(rows)}
 
 def environment():
-    packages={n:importlib.metadata.version(n) for n in ("torch","transformers","numpy","scikit-learn")}
+    packages={n:importlib.metadata.version(n) for n in ("torch","transformers","tokenizers","huggingface-hub","numpy","scikit-learn","scipy")}
     try:commit=subprocess.check_output(["git","rev-parse","HEAD"],stderr=subprocess.DEVNULL,text=True).strip()
     except (subprocess.CalledProcessError,FileNotFoundError):commit=None
-    return {"python":platform.python_version(),"platform":platform.platform(),"packages":packages,"git_commit":commit,"cuda":torch.version.cuda}
+    gpu=None
+    if torch.cuda.is_available():
+        props=torch.cuda.get_device_properties(torch.cuda.current_device())
+        gpu={"name":props.name,"total_memory_bytes":props.total_memory,"device_count":torch.cuda.device_count()}
+    return {"python":platform.python_version(),"platform":platform.platform(),"packages":packages,"git_commit":commit,"cuda":torch.version.cuda,"hip":torch.version.hip,"gpu":gpu}
+
+def save_torch_atomic(path, value):
+    path=Path(path)
+    temp=path.with_name(path.name+".tmp")
+    torch.save(value,temp)
+    os.replace(temp,path)
+
+def capture_rng(loader):
+    return {"python":random.getstate(),"numpy":np.random.get_state(),"torch":torch.get_rng_state(),
+            "cuda":torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+            "sampler":loader.batch_sampler.sampler.generator.get_state()}
+
+def restore_rng(state,loader):
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    torch.set_rng_state(state["torch"])
+    if state["cuda"] is not None:torch.cuda.set_rng_state_all(state["cuda"])
+    loader.batch_sampler.sampler.generator.set_state(state["sampler"])
 
 def train(dataset, output, config):
     config=load_config(overrides=config)
     output=Path(output)
-    if output.exists() and any(output.iterdir()):raise FileExistsError(f"Run directory must be empty: {output}")
-    output.mkdir(parents=True,exist_ok=True)
     splits,manifest=load_dataset(dataset)
     if set(config["tasks"])-set(manifest["tasks"]):raise ValueError("Dataset lacks a requested task")
+    dataset_hash=sha256(Path(dataset)/"manifest.json")
+    previous=None
+    if output.exists() and any(output.iterdir()):
+        if not (output/"manifest.json").exists():raise FileExistsError(f"Run directory has no manifest: {output}")
+        previous=read_json(output/"manifest.json")
+        if previous.get("status")!="running" or previous.get("config")!=config or previous.get("dataset_manifest_sha256")!=dataset_hash:
+            raise ValueError(f"Run is complete or its configuration/data changed: {output}")
+    else:output.mkdir(parents=True,exist_ok=True)
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG",":4096:8")
     torch.set_num_threads(config["threads"])
     seed_everything(config["seed"])
@@ -119,13 +147,15 @@ def train(dataset, output, config):
     if device.type=="cuda":torch.cuda.reset_peak_memory_stats()
     rows=splits["train"][:config["train_limit"]] if config["train_limit"] else splits["train"]
     dev=splits["dev"][:config["eval_limit"]] if config["eval_limit"] else splits["dev"]
-    tokenizer=AutoTokenizer.from_pretrained(config["backbone"])
+    tokenizer=AutoTokenizer.from_pretrained(output/"tokenizer" if previous else config["backbone"])
     model=build_model(config,len(manifest["emotions"])).to(device)
-    tokenizer.save_pretrained(output/"tokenizer")
+    if not previous:tokenizer.save_pretrained(output/"tokenizer")
     # Save encoder config, needed for model reconstruction on another machine.
     core=model.core
     encoder=next(iter(core.encoders.values())) if hasattr(core,"encoders") else next(getattr(core,n) for n in ("encoder","transformer","bert","encoder_a") if hasattr(core,n))
-    encoder.config.save_pretrained(output/"encoder_config")
+    if previous and previous.get("encoder_revision")!=getattr(encoder.config,"_commit_hash",None):
+        raise ValueError("Backbone revision changed since the interrupted run")
+    if not previous:encoder.config.save_pretrained(output/"encoder_config")
     loss_fns=TaskLosses(rows,manifest["emotions"],config["tasks"],device,config["focal_gamma"])
     loader=make_loader(rows,tokenizer,config,shuffle=True)
     optimizer=torch.optim.AdamW(model.parameters(),lr=config["learning_rate"],weight_decay=config["weight_decay"])
@@ -133,13 +163,43 @@ def train(dataset, output, config):
     total_steps=updates_per_epoch*config["epochs"]
     if config["max_steps"]:total_steps=min(total_steps,config["max_steps"])
     scheduler=get_linear_schedule_with_warmup(optimizer,int(total_steps*config["warmup_ratio"]),total_steps)
-    run_manifest={"config":config,"environment":environment(),"dataset_manifest_sha256":sha256(Path(dataset)/"manifest.json"),"dataset_manifest":manifest,"status":"running","smoke":config["smoke"],"deterministic_algorithms":True,"parameters":sum(p.numel() for p in model.parameters()),"trainable_parameters":sum(p.numel() for p in model.parameters() if p.requires_grad),"train_records_used":len(rows),"dev_records_used":len(dev),"token_audit":{"train":token_audit(rows,tokenizer,config["max_length"]),"dev":token_audit(dev,tokenizer,config["max_length"])},"class_weights":{"emotion":loss_fns.em_weights.cpu().tolist(),"sentiment":loss_fns.sent_weights.cpu().tolist() if loss_fns.sent_weights is not None else None},"encoder_revision":getattr(encoder.config,"_commit_hash",None),"selection":"mean dev task macro-F1; intensity macro over emotions; emotion threshold selected on dev"}
-    write_json(output/"manifest.json",run_manifest)
+    run_manifest=previous or {"config":config,"environment":environment(),"dataset_manifest_sha256":dataset_hash,"dataset_manifest":manifest,"status":"running","smoke":config["smoke"],"deterministic_algorithms":True,"parameters":sum(p.numel() for p in model.parameters()),"trainable_parameters":sum(p.numel() for p in model.parameters() if p.requires_grad),"train_records_used":len(rows),"dev_records_used":len(dev),"token_audit":{"train":token_audit(rows,tokenizer,config["max_length"]),"dev":token_audit(dev,tokenizer,config["max_length"])},"class_weights":{"emotion":loss_fns.em_weights.cpu().tolist(),"sentiment":loss_fns.sent_weights.cpu().tolist() if loss_fns.sent_weights is not None else None},"encoder_revision":getattr(encoder.config,"_commit_hash",None),"selection":"mean dev task macro-F1; intensity macro over emotions; emotion threshold selected on dev","resume_count":0}
+    if not previous:write_json(output/"manifest.json",run_manifest)
     probe_rows,probe_manifest=select_probe(rows,config["diagnostic_batch_size"])
-    write_json(output/"probe_manifest.json",probe_manifest|{"ids":[r["id"] for r in probe_rows]})
+    probe=probe_manifest|{"ids":[r["id"] for r in probe_rows]}
+    if previous:
+        if read_json(output/"probe_manifest.json")!=probe:raise ValueError("Diagnostic probe changed since the interrupted run")
+    else:write_json(output/"probe_manifest.json",probe)
     best=-float("inf"); best_epoch=0; steps=0; history=[]; diagnostics=[]
-    started=time.perf_counter(); diagnostic_seconds=0
-    for epoch in range(1,config["epochs"]+1):
+    diagnostic_seconds=0; elapsed_before=0; first_epoch=1; finished=False
+    checkpoint=output/"last_epoch.pt"
+    if previous:
+        if checkpoint.exists():
+            state=torch.load(checkpoint,map_location=device,weights_only=False)
+            if state["config"]!=config or state["dataset_manifest_sha256"]!=dataset_hash:
+                raise ValueError("Resume checkpoint differs from configuration/data")
+            model.load_state_dict(state["model"]);optimizer.load_state_dict(state["optimizer"])
+            scheduler.load_state_dict(state["scheduler"])
+            history=state["history"];diagnostics=state["diagnostics"]
+            best=state["best"];best_epoch=state["best_epoch"];steps=state["steps"]
+            diagnostic_seconds=state["diagnostic_seconds"]
+            elapsed_before=max(state["elapsed_seconds"],previous.get("elapsed_seconds_so_far",0))
+            first_epoch=state["epoch"]+1;finished=state["finished"]
+            restore_rng(state["rng"],loader)
+            write_jsonl(output/"history.jsonl",history)
+            if config["diagnostics"]:write_jsonl(output/"diagnostics.jsonl",diagnostics)
+            if best_epoch==state["epoch"]:
+                save_torch_atomic(output/"best_model.pt",state["model"])
+                write_json(output/"best.json",{"epoch":best_epoch,"threshold":history[-1]["threshold"],"score":best,"dev_metrics":history[-1]["dev_metrics"]})
+            elif not (output/"best_model.pt").exists() or sha256(output/"best_model.pt")!=state["best_checkpoint_sha256"]:
+                raise ValueError("Previous best checkpoint is missing or changed")
+        elif any((output/name).exists() for name in ("history.jsonl","best_model.pt")):
+            raise ValueError("Interrupted run has results but no resumable epoch checkpoint")
+        run_manifest["resume_count"]=run_manifest.get("resume_count",0)+1
+        write_json(output/"manifest.json",run_manifest)
+    started=time.perf_counter()
+    for epoch in range(first_epoch,config["epochs"]+1):
+        if finished:break
         model.train(); optimizer.zero_grad(set_to_none=True)
         raw_sums={}; counts={}; reg_sum=0; batches=0
         for index,batch in enumerate(loader):
@@ -164,26 +224,50 @@ def train(dataset, output, config):
             d=capture_batches(model,probe_batches,loss_fns,config,[r["id"] for r in probe_rows])
             diagnostic_seconds+=time.perf_counter()-t
             d.update(epoch=epoch,optimizer_steps=steps,probe_ids=[r["id"] for r in probe_rows]);diagnostics.append(d)
-            write_jsonl(output/"diagnostics.jsonl",diagnostics)
         predictions,dev_losses=infer(model,dev,tokenizer,config,loss_fns)
         threshold=tune_threshold(dev,predictions,manifest["emotions"],config["tasks"],config["threshold_candidates"])
         metrics=evaluate_predictions(dev,predictions,manifest["emotions"],config["tasks"],threshold)
         score=selection_score(metrics,config["tasks"])
         losses_logged={t:raw_sums[t]/counts[t] if counts[t] else None for t in raw_sums}
         entry={"epoch":epoch,"optimizer_steps":steps,"train_losses":losses_logged,"weighted_train_losses":{t:v*config["weights"][t] if v is not None else None for t,v in losses_logged.items()},"regularization_loss":reg_sum/batches,"dev_losses":dev_losses,"dev_metrics":metrics,"threshold":threshold,"selection_score":score}
-        history.append(entry);write_jsonl(output/"history.jsonl",history)
+        history.append(entry)
         print(f"epoch={epoch} steps={steps} dev_score={score:.4f}",flush=True)
-        if score>best:
-            best=score;best_epoch=epoch
-            torch.save(model.state_dict(),output/"best_model.pt")
+        improved=score>best
+        if improved:best=score;best_epoch=epoch
+        finished=epoch-best_epoch>=config["patience"] or steps>=total_steps or epoch==config["epochs"]
+        best_hash=None if improved else sha256(output/"best_model.pt")
+        state={"config":config,"dataset_manifest_sha256":dataset_hash,"epoch":epoch,"finished":finished,
+               "model":model.state_dict(),"optimizer":optimizer.state_dict(),"scheduler":scheduler.state_dict(),
+               "rng":capture_rng(loader),"history":history,"diagnostics":diagnostics,"best":best,
+               "best_epoch":best_epoch,"best_checkpoint_sha256":best_hash,"steps":steps,
+               "diagnostic_seconds":diagnostic_seconds,"elapsed_seconds":elapsed_before+time.perf_counter()-started}
+        save_torch_atomic(checkpoint,state)
+        write_jsonl(output/"history.jsonl",history)
+        if config["diagnostics"]:write_jsonl(output/"diagnostics.jsonl",diagnostics)
+        if improved:
+            save_torch_atomic(output/"best_model.pt",model.state_dict())
             write_json(output/"best.json",{"epoch":epoch,"threshold":threshold,"score":score,"dev_metrics":metrics})
-        if epoch-best_epoch>=config["patience"] or steps>=total_steps:break
-    run_manifest.update(status="trained",best_epoch=best_epoch,optimizer_steps=steps,elapsed_seconds=time.perf_counter()-started,diagnostic_seconds=diagnostic_seconds,peak_cuda_bytes=torch.cuda.max_memory_allocated() if device.type=="cuda" else None,checkpoint_sha256=sha256(output/"best_model.pt"),seconds_per_optimizer_step=(time.perf_counter()-started)/max(steps,1))
-    write_json(output/"manifest.json",run_manifest)
+        run_manifest.update(last_completed_epoch=epoch,best_epoch=best_epoch,optimizer_steps=steps,
+                            elapsed_seconds_so_far=elapsed_before+time.perf_counter()-started,
+                            diagnostic_seconds_so_far=diagnostic_seconds,
+                            resumable_checkpoint_bytes=checkpoint.stat().st_size,
+                            peak_cuda_bytes_so_far=max(run_manifest.get("peak_cuda_bytes_so_far") or 0,
+                                                       torch.cuda.max_memory_allocated() if device.type=="cuda" else 0))
+        write_json(output/"manifest.json",run_manifest)
+        if finished:break
     # Development predictions only. Final test evaluation is an explicit command.
     model.load_state_dict(torch.load(output/"best_model.pt",map_location=device,weights_only=True))
     predictions,_=infer(model,dev,tokenizer,config)
     write_json(output/"dev_predictions.json",{"ids":[r["id"] for r in dev],"predictions":predictions})
+    elapsed=elapsed_before+time.perf_counter()-started
+    run_manifest.update(status="trained",best_epoch=best_epoch,optimizer_steps=steps,
+                        elapsed_seconds=elapsed,diagnostic_seconds=diagnostic_seconds,
+                        peak_cuda_bytes=max(run_manifest.get("peak_cuda_bytes_so_far") or 0,
+                                            torch.cuda.max_memory_allocated() if device.type=="cuda" else 0) if device.type=="cuda" else None,
+                        checkpoint_sha256=sha256(output/"best_model.pt"),
+                        seconds_per_optimizer_step=elapsed/max(steps,1))
+    write_json(output/"manifest.json",run_manifest)
+    checkpoint.unlink(missing_ok=True)
     return run_manifest
 
 def evaluate_run(dataset,run,split="test"):
@@ -217,4 +301,7 @@ def evaluate_run(dataset,run,split="test"):
     write_json(run/f"{split}_predictions.json",{"ids":[r["id"] for r in rows],"group_ids":[r["group_id"] for r in rows],"predictions":predictions,"truth":{t:[r[t] for r in rows] for t in config["tasks"]}})
     result={"split":split,"smoke":config["smoke"],"threshold_from_dev":threshold,"metrics":metrics,"majority_baseline":majority_baseline(splits["train"],rows,data_manifest["emotions"],config["tasks"])}
     write_json(run/f"{split}_results.json",result)
+    manifest.setdefault("evaluation_sha256",{})[split]={name:sha256(run/name) for name in
+        (f"{split}_predictions.json",f"{split}_results.json")}
+    write_json(run/"manifest.json",manifest)
     return result

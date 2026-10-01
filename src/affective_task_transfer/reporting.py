@@ -1,9 +1,10 @@
 """Report separate task results and paired seed deltas, retaining raw evidence."""
 from collections import defaultdict
 import csv
+from itertools import combinations
 from pathlib import Path
 import numpy as np
-from .io import read_json, read_jsonl, write_json
+from .io import read_json, read_jsonl, write_json, sha256
 
 def write_csv(path,rows):
     if not rows:return
@@ -24,6 +25,42 @@ def conditional_task_deltas(rows):
             if pair is None:continue
             delta=triple["value"]-pair["value"]
             result.append({k:triple[k] for k in ("dataset_hash","backbone","seed","task","metric")}|{"pair_condition":pair["condition"],"triple_condition":triple["condition"],"added_task":added,"delta_triple_minus_pair":delta,"benefit":(-delta if triple["metric"]=="mae" else delta)})
+    return result
+
+def architecture_deltas(rows):
+    """Within-seed architecture contrasts for the same dataset and task set."""
+    primary={"hard_sharing","soft_sharing","adapters","mmoe"}
+    groups=defaultdict(dict)
+    for row in rows:
+        if row["architecture"] in primary and row["condition"]==row["architecture"]+"_"+row["tasks"].replace("+","_"):
+            key=tuple(row[k] for k in ("dataset_hash","backbone","tasks","seed","task","metric"))
+            if row["architecture"] in groups[key]:raise ValueError(f"Duplicate architecture result: {key}")
+            groups[key][row["architecture"]]=row
+    result=[]
+    for key,by_arch in groups.items():
+        for a,b in combinations(sorted(by_arch),2):
+            delta=by_arch[a]["value"]-by_arch[b]["value"]
+            benefit=-delta if key[-1]=="mae" else delta
+            result.append(dict(zip(("dataset_hash","backbone","tasks","seed","task","metric"),key))|
+                          {"architecture_a":a,"architecture_b":b,"delta_a_minus_b":delta,"benefit_a_over_b":benefit})
+    return result
+
+def summarize_architecture_deltas(rows):
+    groups=defaultdict(list)
+    for row in rows:
+        key=tuple(row[k] for k in ("dataset_hash","backbone","tasks","task","metric","architecture_a","architecture_b"))
+        groups[key].append(row["benefit_a_over_b"])
+    result=[]
+    for key,values in groups.items():
+        mean=float(np.mean(values));sd=float(np.std(values,ddof=1)) if len(values)>1 else None
+        if sd is not None:
+            from scipy.stats import t
+            margin=float(t.ppf(0.975,len(values)-1)*sd/np.sqrt(len(values)))
+        else:margin=None
+        result.append(dict(zip(("dataset_hash","backbone","tasks","task","metric","architecture_a","architecture_b"),key))|
+                      {"n_paired_seeds":len(values),"mean_benefit_a_over_b":mean,"sd":sd,
+                       "ci95_low":mean-margin if margin is not None else None,
+                       "ci95_high":mean+margin if margin is not None else None})
     return result
 
 def plot_run(run,output):
@@ -50,16 +87,48 @@ def plot_run(run,output):
             im=ax.imshow([v["mean_weights"] for v in routing.values()],vmin=0,vmax=1)
             ax.set_yticks(range(len(routing)),list(routing));ax.set_xlabel("Expert");fig.colorbar(im,ax=ax,label="Mean gate weight");fig.tight_layout();fig.savefig(output/f"{run.name}_routing.png",dpi=150);plt.close(fig)
 
-def report(root,output,split="test",allow_smoke=False):
-    root=Path(root);output=Path(output);output.mkdir(parents=True,exist_ok=True)
+def matrix_result_files(matrices,split):
+    files=[];seen=set()
+    for matrix_path in matrices:
+        matrix_path=Path(matrix_path)
+        matrix=read_json(matrix_path)
+        if matrix["runs"]!=len(matrix["configs"]):raise ValueError(f"Incomplete matrix manifest: {matrix_path}")
+        for name in matrix["configs"]:
+            cfg=read_json(matrix_path.parent/name)
+            run=Path(cfg["output"])
+            if run.resolve() in seen:raise ValueError(f"Duplicate matrix run: {run}")
+            seen.add(run.resolve())
+            manifest=read_json(run/"manifest.json")
+            if manifest["status"]!="trained" or manifest["config"]!=cfg or manifest["smoke"]:
+                raise ValueError(f"Incomplete or mismatched run: {run}")
+            if sha256(run/"best_model.pt")!=manifest["checkpoint_sha256"]:
+                raise ValueError(f"Changed checkpoint: {run}")
+            if sha256(Path(cfg["dataset"])/"manifest.json")!=manifest["dataset_manifest_sha256"]:
+                raise ValueError(f"Changed dataset: {run}")
+            hashes=manifest.get("evaluation_sha256",{}).get(split)
+            if not hashes or any(sha256(run/file)!=digest for file,digest in hashes.items()):
+                raise ValueError(f"Missing or changed {split} evaluation: {run}")
+            file=run/f"{split}_results.json"
+            if read_json(file)["split"]!=split:raise ValueError(f"Wrong evaluation split: {run}")
+            files.append(file)
+    return files
+
+def report(root,output,split="test",allow_smoke=False,matrices=None,expected_runs=None):
+    root=Path(root);output=Path(output)
+    if not allow_smoke and not matrices:
+        raise ValueError("A non-smoke report requires explicit matrix manifests")
+    files=matrix_result_files(matrices,split) if matrices else sorted(root.rglob(f"{split}_results.json"))
+    if expected_runs is not None and len(files)!=expected_runs:
+        raise ValueError(f"Expected {expected_runs} evaluated runs, found {len(files)}")
+    output.mkdir(parents=True,exist_ok=True)
     rows=[]; runs={}; per_class=[]; confusion={}; resources=[]
-    for file in sorted(root.rglob(f"{split}_results.json")):
+    for file in files:
         run=file.parent; manifest=read_json(run/"manifest.json");result=read_json(file);cfg=manifest["config"]
         if manifest["smoke"] and not allow_smoke:continue
         condition=cfg.get("matrix_condition") or cfg["architecture"]+"_"+"_".join(cfg["tasks"])
         dataset_hash=manifest["dataset_manifest_sha256"]
         runs[str(run)]={"manifest":manifest,"result":result,"condition":condition}
-        resources.append({"run":str(run),"dataset_hash":dataset_hash,"backbone":cfg["backbone"],"condition":condition,"seed":cfg["seed"],"parameters":manifest["parameters"],"trainable_parameters":manifest["trainable_parameters"],"elapsed_seconds":manifest["elapsed_seconds"],"diagnostic_seconds":manifest["diagnostic_seconds"],"optimizer_steps":manifest["optimizer_steps"],"peak_cuda_bytes":manifest["peak_cuda_bytes"],"train_truncated_fraction":manifest["token_audit"]["train"]["truncated_fraction"]})
+        resources.append({"run":str(run),"dataset_hash":dataset_hash,"backbone":cfg["backbone"],"condition":condition,"seed":cfg["seed"],"parameters":manifest["parameters"],"trainable_parameters":manifest["trainable_parameters"],"elapsed_seconds":manifest["elapsed_seconds"],"diagnostic_seconds":manifest["diagnostic_seconds"],"optimizer_steps":manifest["optimizer_steps"],"peak_cuda_bytes":manifest["peak_cuda_bytes"],"resumable_checkpoint_bytes":manifest.get("resumable_checkpoint_bytes"),"gpu_name":(manifest["environment"].get("gpu") or {}).get("name"),"hip":manifest["environment"].get("hip"),"train_truncated_fraction":manifest["token_audit"]["train"]["truncated_fraction"]})
         for task in [*cfg["tasks"],*(["joint"] if "joint" in result["metrics"] else [])]:
             values=result["metrics"][task]
             detail={"overall":values}
@@ -104,6 +173,10 @@ def report(root,output,split="test",allow_smoke=False):
             direction=-1 if r["metric"]=="mae" else 1
             deltas.append({k:r[k] for k in ("dataset_hash","backbone","condition","seed","task","metric")}|{"delta_mtl_minus_stl":delta,"improvement_direction":direction,"benefit":delta*direction,"transfer":"positive" if delta*direction>0 else "negative" if delta*direction<0 else "tie"})
     write_csv(output/"paired_deltas.csv",deltas)
+    architecture_pairs=architecture_deltas(rows)
+    write_csv(output/"architecture_deltas.csv",architecture_pairs)
+    architecture_summary=summarize_architecture_deltas(architecture_pairs)
+    write_csv(output/"architecture_summary.csv",architecture_summary)
     conditional=conditional_task_deltas(rows)
     write_csv(output/"conditional_deltas.csv",conditional)
     class_index={(r["dataset_hash"],r["backbone"],r["seed"],r["task"],r["emotion"],r["class"]):r for r in per_class if r["condition"]=="stl_"+r["task"]}
@@ -130,7 +203,7 @@ def report(root,output,split="test",allow_smoke=False):
         else:margin=None
         paired_summary.append(dict(zip(("dataset_hash","backbone","condition","task","metric"),key))|{"n_paired_seeds":len(benefits),"mean_benefit":mean,"sd_benefit":sd,"ci95_low":mean-margin if margin is not None else None,"ci95_high":mean+margin if margin is not None else None,"positive_seeds":sum(r["transfer"]=="positive" for r in values),"negative_seeds":sum(r["transfer"]=="negative" for r in values),"ties":sum(r["transfer"]=="tie" for r in values)})
     write_csv(output/"paired_summary.csv",paired_summary)
-    write_json(output/"report_manifest.json",{"split":split,"allow_smoke":allow_smoke,"runs":list(runs),"summary_rows":len(summary),"paired_rows":len(deltas),"paired_summary_rows":len(paired_summary),"conditional_rows":len(conditional),"class_paired_rows":len(class_deltas),"interpretation":"Paired seed differences on one split use the same backbone and seed. Positive benefit means MTL outperformed matched STL; MAE is inverted. Conditional differences compare the soft-sharing pair with its three-task model. The t interval is descriptive with five seeds and does not cover dataset sampling or label uncertainty. Gradient agreement and routing do not prove causal knowledge flow. No cross-dataset pooling."})
-    text=["# Experiment report", "", f"Split: {split}. Runs: {len(runs)}. Smoke inclusion: {allow_smoke}.","", "See per_seed.csv, per_class.csv, class_paired_deltas.csv, majority_baselines.csv, conditional_deltas.csv, confusion_matrices.json, summary.csv, paired_deltas.csv, paired_summary.csv and resources.csv.","", "Gradient agreement and routing are diagnostics, not proof of knowledge flow. Positive/negative transfer is evaluated against the paired STL baseline; inspect task trade-offs and intervals across seeds."]
+    write_json(output/"report_manifest.json",{"split":split,"allow_smoke":allow_smoke,"matrices":[str(p) for p in matrices] if matrices else None,"expected_runs":expected_runs,"runs":list(runs),"summary_rows":len(summary),"paired_rows":len(deltas),"paired_summary_rows":len(paired_summary),"architecture_paired_rows":len(architecture_pairs),"conditional_rows":len(conditional),"class_paired_rows":len(class_deltas),"interpretation":"Paired seed differences on one split use the same backbone and seed. Positive benefit means MTL outperformed matched STL; MAE is inverted. Architecture pairs compare the same dataset, backbone, task set, seed and metric. The t interval is descriptive with five seeds and does not cover dataset sampling or label uncertainty. Conditional differences compare the soft-sharing pair with its three-task model. Gradient agreement and routing do not prove causal knowledge flow. No cross-dataset pooling."})
+    text=["# Experiment report", "", f"Split: {split}. Runs: {len(runs)}. Smoke inclusion: {allow_smoke}.","", "See per_seed.csv, per_class.csv, class_paired_deltas.csv, majority_baselines.csv, conditional_deltas.csv, confusion_matrices.json, summary.csv, paired_deltas.csv, paired_summary.csv, architecture_deltas.csv, architecture_summary.csv and resources.csv.","", "Gradient agreement and routing are diagnostics, not proof of knowledge flow. Positive/negative transfer is evaluated against the paired STL baseline; inspect task trade-offs and intervals across seeds. Architecture contrasts describe systems with different capacity and cost."]
     (output/"README.md").write_text("\n".join(text),encoding="utf-8")
     return {"runs":len(runs),"output":str(output)}

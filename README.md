@@ -16,9 +16,11 @@ Study II uses the **start half of each historical MEISD dialogue**, consistent w
 
 An external study uses [BRIGHTER English Track B](https://huggingface.co/datasets/brighter-dataset/BRIGHTER-emotion-intensities) to examine emotion and intensity on a separate corpus. BRIGHTER has no sentiment labels. For this track, emotion presence is derived from an intensity greater than zero; the two labels are therefore related by construction. The BRIGHTER experiment retrains models on that corpus and does not claim zero-shot transfer from MEISD.
 
-Outputs include accuracy, precision, recall, F1, confusion matrices, and results by task and class, including joint emotion-intensity evaluation. Training logs also record task losses, gradient norms and cosine similarities on a fixed, label-coverage training probe, and MMoE routing. Positive or negative transfer is assessed against a matched STL run with the same dataset, backbone, split, and seed. Pair-to-triple comparisons test the incremental effect of adding a task in soft sharing. These diagnostics help examine shared optimization; they do not by themselves establish a causal flow of knowledge between tasks.
+Outputs include accuracy, precision, recall, F1, confusion matrices, and results by task and class, including joint emotion-intensity evaluation. Training logs also record task losses, gradient norms and cosine similarities on a fixed, label-coverage training probe, and MMoE routing. Positive or negative transfer is assessed against a matched STL run with the same dataset, backbone, split, and seed. Pair-to-triple comparisons test the incremental effect of adding a task in soft sharing. These diagnostics help examine shared optimization; they do not by themselves establish a causal flow of knowledge between tasks. The architecture comparison and its interpretation limits are specified in [`docs/ARCHITECTURE_COMPARISON.md`](docs/ARCHITECTURE_COMPARISON.md).
 
 Forecasting, training-set-size curves, and new augmentation methods are outside this project's scope. The full experiment matrix has not been run; those runs are reserved for the target computer after implementation review and runtime estimation. The earlier repository and its results remain intact.
+
+Study II now uses a **192-token maximum**. A local token audit found that the former 128-token setting truncated 282/1,378 MEISD training texts, including 245/828 augmented texts; all current MEISD texts fit within 192 tokens. New GPU timing and memory pilots are required because the earlier BRIGHTER preflight used 128-token padding. The executable pre-run gates are in [`docs/PRE_RUN_CHECKLIST_2026-10-02.md`](docs/PRE_RUN_CHECKLIST_2026-10-02.md).
 
 ## Data audit and layout
 
@@ -41,9 +43,10 @@ python -m venv .venv
 .\.venv\Scripts\att.exe prepare-meisd --csv data/source/meisd/multilabel_augmented_onehot_11222025.csv --expanded data/source/meisd/MEISD_balanced_expanded.csv --raw-meisd data/source/meisd/MEISD_text.csv --output data/prepared/meisd-study2-v1
 .\.venv\Scripts\att.exe download-brighter --output data/source/brighter
 .\.venv\Scripts\att.exe prepare-brighter --input data/source/brighter --output data/prepared/brighter-study2-v1
+.\.venv\Scripts\att.exe sample-label-audit --dataset data/prepared/meisd-study2-v1 --output data/audit/study2-label-review.csv --seed 2026 --per-stratum 20
 ```
 
-The `--expanded` argument may be omitted when the matching file is beside the one-hot CSV. Preparation fails if augmented rows lack text and the expanded file is unavailable. Dataset manifests and run directories are never overwritten silently.
+The `--expanded` argument may be omitted when the matching file is beside the one-hot CSV. Preparation fails if augmented rows lack text and the expanded file is unavailable. Dataset manifests and run directories are never overwritten silently. The audit command writes a local, train-only worksheet with 80 examples across original/augmented and short/long strata. A human reviewer must assess the blank label-validity fields; the sample does not certify the inherited labels automatically.
 
 ## Verify and plan experiments
 
@@ -52,12 +55,18 @@ The `--expanded` argument may be omitted when the matching file is beside the on
 $env:PYTHONPATH="src"
 .\.venv\Scripts\python.exe scripts/smoke.py --dataset data/prepared/meisd-study2-v1 --output outputs/smoke-meisd-study2
 .\.venv\Scripts\python.exe scripts/smoke.py --dataset data/prepared/brighter-study2-v1 --output outputs/smoke-brighter-study2 --brighter
-.\.venv\Scripts\att.exe make-matrix --dataset data/prepared/meisd-study2-v1 --dataset-name meisd --output outputs/matrix-meisd-study2-v2
-.\.venv\Scripts\att.exe make-matrix --dataset data/prepared/brighter-study2-v1 --dataset-name brighter --output outputs/matrix-brighter-study2-v2
+.\.venv\Scripts\att.exe make-matrix --dataset data/prepared/meisd-study2-v1 --dataset-name meisd --output outputs/matrix-meisd-study2-2026-10-02
+.\.venv\Scripts\att.exe make-matrix --dataset data/prepared/brighter-study2-v1 --dataset-name brighter --output outputs/matrix-brighter-study2-2026-10-02
 ```
 
-Creating the matrices does not train models. The primary protocol contains **50 MEISD and 30 BRIGHTER runs**. Generate optional extension matrices explicitly with `--backbones ...`, `--legacy-architectures`, or `--ablations`; use separate output directories. After timing representative runs on the target computer, `att run-matrix --matrix outputs/matrix-meisd-study2-v2/matrix.json` starts the MEISD runs; `--limit N` restricts the command to the first N configurations. The same command applies to the BRIGHTER matrix.
+Creating the matrices does not train models. The primary protocol contains **50 MEISD and 30 BRIGHTER runs**. Generate optional extension matrices explicitly with `--backbones ...`, `--legacy-architectures`, or `--ablations`; use separate output directories. After timing representative **192-token** runs on the target computer, `att run-matrix --matrix outputs/matrix-meisd-study2-2026-10-02/matrix.json` starts the MEISD runs; `--limit N` restricts the command to the first N configurations. The same command applies to the BRIGHTER matrix. Each epoch saves history and a temporary resumable checkpoint containing model, optimiser, scheduler and random-number state. Repeating `run-matrix` resumes a configuration-matching interrupted run from its last completed epoch; it verifies completed checkpoint hashes. The temporary checkpoint is removed after successful completion to limit disk use.
 
-Checkpoint selection and the emotion threshold use development data. Once the runs are reviewed, use `att evaluate-matrix --matrix outputs/matrix-meisd-study2-v2/matrix.json --split test` and the corresponding BRIGHTER command. Generate tables and plots with `att report --runs outputs --output outputs/report-study2 --split test`. The smoke script uses a small randomly initialized BERT to check the pipeline; its scores are not research results.
+Checkpoint selection and the emotion threshold use development data. Once the runs are reviewed, use `att evaluate-matrix --matrix outputs/matrix-meisd-study2-2026-10-02/matrix.json --split test` and the corresponding BRIGHTER command. Generate tables and plots only after both matrices have complete verified evaluations:
 
-Each run records configuration, library versions, dataset hashes, seed, training time and steps, selected checkpoint, predictions, and metrics. Reports include per-seed results, paired differences from STL, pair-to-triple soft-sharing differences, class-level results, confusion matrices, learning curves, gradient diagnostics, routing, and resource use. See [`docs/RUN_HANDOFF.md`](docs/RUN_HANDOFF.md) for the target-computer workflow.
+```powershell
+.\.venv\Scripts\att.exe report --matrices outputs/matrix-meisd-study2-2026-10-02/matrix.json outputs/matrix-brighter-study2-2026-10-02/matrix.json --expected-runs 80 --output outputs/report-study2 --split test
+```
+
+The report rejects missing or changed runs instead of silently summarising a partial matrix. The smoke script uses a small randomly initialized BERT to check the pipeline; its scores are not research results.
+
+Each run records configuration, library versions, GPU/HIP details, dataset hashes, seed, training time and steps, selected checkpoint, predictions, and metrics. Reports include per-seed results, paired differences from STL, direct paired architecture contrasts, pair-to-triple soft-sharing differences, class-level results, confusion matrices, learning curves, gradient diagnostics, routing, and resource use. See [`docs/RUN_HANDOFF.md`](docs/RUN_HANDOFF.md) for the target-computer workflow.

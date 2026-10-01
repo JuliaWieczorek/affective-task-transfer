@@ -9,6 +9,7 @@
   "smoke": true,
   "epochs": 1,
   "batch_size": 16,
+  "max_length": 128,
   "diagnostics": true,
   "diagnostic_batch_size": 32
 }

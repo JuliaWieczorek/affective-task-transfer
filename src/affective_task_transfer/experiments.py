@@ -1,7 +1,7 @@
 from itertools import combinations
 from pathlib import Path
 from .config import load_config
-from .io import write_json, read_json
+from .io import write_json, read_json, sha256
 
 BACKBONES=["bert-base-uncased","bert-base-cased","roberta-base","xlm-roberta-base"]
 SEEDS=[42,52,62,72,82]
@@ -35,11 +35,11 @@ def matrix(dataset,output,dataset_name="meisd",include_ablation=False,include_hi
     for backbone in backbones:
         for name,overrides in conditions:
             for seed in SEEDS:
-                run_name=f"study2_{dataset_name}_{backbone}_{name}_seed{seed}"
+                run_name=f"study2_192_{dataset_name}_{backbone}_{name}_seed{seed}"
                 cfg=load_config(overrides=overrides|{"backbone":backbone,"seed":seed,"dataset":str(Path(dataset).resolve()),"output":str(Path("outputs")/run_name),"matrix_condition":name,"name":run_name})
                 path=directory/f"{run_name}.json"
                 write_json(path,cfg); configs.append(path.name)
-    write_json(directory/"matrix.json",{"study":"II","protocol":"study-ii-2026-09-30","dataset":dataset_name,"backbones":backbones,"architectures":architectures,"seeds":SEEDS,"runs":len(configs),"configs":configs,"historical_stl":include_historical_stl,"ablation":include_ablation,"legacy_architectures":include_legacy_architectures,"primary_scope":backbones==PRIMARY_BACKBONES and not any((include_ablation,include_historical_stl,include_legacy_architectures))})
+    write_json(directory/"matrix.json",{"study":"II","protocol":"study-ii-192-2026-10-01","dataset":dataset_name,"backbones":backbones,"architectures":architectures,"seeds":SEEDS,"runs":len(configs),"configs":configs,"historical_stl":include_historical_stl,"ablation":include_ablation,"legacy_architectures":include_legacy_architectures,"primary_scope":backbones==PRIMARY_BACKBONES and not any((include_ablation,include_historical_stl,include_legacy_architectures))})
     return {"runs":len(configs),"manifest":str(directory/"matrix.json")}
 
 def run_matrix(path,limit=None):
@@ -53,8 +53,17 @@ def run_matrix(path,limit=None):
         if (run/"manifest.json").exists():
             previous=read_json(run/"manifest.json")
             if previous["status"]=="trained" and previous["config"]==config:
+                if not (run/"best_model.pt").exists() or sha256(run/"best_model.pt")!=previous.get("checkpoint_sha256"):
+                    raise ValueError(f"Missing or changed checkpoint: {run}")
+                if not (run/"dev_predictions.json").exists():
+                    raise ValueError(f"Missing development predictions: {run}")
                 results.append({"run":str(run),"status":"already_trained"}); continue
-            raise ValueError(f"Incomplete or mismatched run: {run}. Preserve it and choose a new directory.")
+            if previous["status"]!="running" or previous["config"]!=config:
+                raise ValueError(f"Mismatched run: {run}. Preserve it and choose a new directory.")
+            train(config["dataset"],run,config)
+            results.append({"run":str(run),"status":"resumed"});continue
+        if run.exists() and any(run.iterdir()):
+            raise ValueError(f"Run directory has no manifest: {run}")
         train(config["dataset"],run,config)
         results.append({"run":str(run),"status":"trained"})
     return results
@@ -70,9 +79,17 @@ def evaluate_matrix(path,split="test",limit=None):
         run_manifest=read_json(run/"manifest.json")
         if run_manifest["config"]!=config or run_manifest["status"]!="trained":
             raise ValueError(f"Missing or mismatched trained run: {run}")
+        if sha256(run/"best_model.pt")!=run_manifest.get("checkpoint_sha256"):
+            raise ValueError(f"Missing or changed checkpoint: {run}")
+        if sha256(Path(config["dataset"])/"manifest.json")!=run_manifest["dataset_manifest_sha256"]:
+            raise ValueError(f"Dataset changed: {run}")
         result_file=run/f"{split}_results.json"
         if result_file.exists():
-            if read_json(result_file)["split"]!=split:raise ValueError(f"Mismatched evaluation: {run}")
+            if read_json(result_file)["split"]!=split or not (run/f"{split}_predictions.json").exists():
+                raise ValueError(f"Mismatched evaluation: {run}")
+            hashes=run_manifest.get("evaluation_sha256",{}).get(split)
+            if not hashes or any(sha256(run/name)!=digest for name,digest in hashes.items()):
+                raise ValueError(f"Unverified evaluation: {run}")
             results.append({"run":str(run),"status":"already_evaluated"})
             continue
         evaluate_run(config["dataset"],run,split)

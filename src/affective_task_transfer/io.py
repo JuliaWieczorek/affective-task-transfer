@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 
 def sha256(path):
@@ -20,7 +21,9 @@ def read_csv(path):
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
+    temp = path.with_name(path.name + ".tmp")
+    temp.write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
+    os.replace(temp, path)
 
 def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
@@ -33,6 +36,8 @@ def read_jsonl(path):
 def write_jsonl(path, rows):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
+    temp = path.with_name(path.name + ".tmp")
+    with temp.open("w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
+    os.replace(temp, path)

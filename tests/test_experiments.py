@@ -11,6 +11,8 @@ def test_primary_matrix(tmp_path,dataset,n,stl,pairs):
     assert manifest["runs"]==len(configs)==n
     assert manifest["study"]=="II" and manifest["primary_scope"]
     assert manifest["backbones"]==["bert-base-uncased"]
+    assert all(c["max_length"]==192 for c in configs)
+    assert all("study2_192_" in c["name"] for c in configs)
     assert manifest["architectures"]==PRIMARY_ARCHITECTURES
     assert {c["seed"] for c in configs}==set(SEEDS)
     assert len({c["output"] for c in configs})==n
