@@ -1,0 +1,279 @@
+{
+  "config": {
+    "architecture": "hard_sharing",
+    "backbone": "bert-base-uncased",
+    "tasks": [
+      "emotion",
+      "intensity"
+    ],
+    "seed": 42,
+    "max_length": 128,
+    "batch_size": 16,
+    "epochs": 1,
+    "learning_rate": 2e-05,
+    "weight_decay": 0.01,
+    "dropout": 0.4,
+    "warmup_ratio": 0.2,
+    "accumulation_steps": 1,
+    "patience": 2,
+    "clip_norm": 1.0,
+    "weights": {
+      "sentiment": 1.0,
+      "emotion": 2.0,
+      "intensity": 0.7
+    },
+    "focal_gamma": 2.0,
+    "soft_lambda": 0.0001,
+    "soft_normalization": "mean_pairs",
+    "shared_projection": true,
+    "adapter_bottleneck": 64,
+    "num_experts": 4,
+    "expert_hidden": 256,
+    "lstm_hidden": 128,
+    "threshold_candidates": [
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7
+    ],
+    "device": "cuda",
+    "num_workers": 0,
+    "diagnostic_batch_size": 32,
+    "diagnostics": true,
+    "max_steps": null,
+    "train_limit": null,
+    "eval_limit": null,
+    "threads": 2,
+    "smoke": true,
+    "stl_baseline": "matched_stl",
+    "dataset": "data/prepared/brighter-study2-v1",
+    "output": "outputs/preflight-brighter-hard-sharing-2026-10-01"
+  },
+  "environment": {
+    "python": "3.12.2",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "packages": {
+      "torch": "2.9.1+rocm7.2.1",
+      "transformers": "4.49.0",
+      "numpy": "2.5.3",
+      "scikit-learn": "1.9.1"
+    },
+    "git_commit": "a5dcdc09aa3f77a947431b23eff3f1ddc5f2702c",
+    "cuda": null
+  },
+  "dataset_manifest_sha256": "84de8bb1395d6f6afbbf731a28cae029715537b20a77c567e0fab9d1ee8ac9e5",
+  "dataset_manifest": {
+    "schema_version": 1,
+    "emotions": [
+      "anger",
+      "fear",
+      "joy",
+      "sadness",
+      "surprise"
+    ],
+    "tasks": [
+      "emotion",
+      "intensity"
+    ],
+    "files": {
+      "train": {
+        "file": "train.jsonl",
+        "sha256": "1ed3cd0fe42149bb74d03766e3458e59c0ddff69228e4a967db87759759f3449",
+        "records": 2753,
+        "groups": 2753,
+        "augmented": 0,
+        "sentiment": {
+          "-100": 2753
+        },
+        "emotion_support": {
+          "anger": 331,
+          "fear": 1605,
+          "joy": 673,
+          "sadness": 873,
+          "surprise": 836
+        },
+        "intensity_support": {
+          "anger": {
+            "1": 205,
+            "3": 38,
+            "2": 88
+          },
+          "fear": {
+            "1": 853,
+            "2": 544,
+            "3": 208
+          },
+          "joy": {
+            "2": 160,
+            "1": 449,
+            "3": 64
+          },
+          "sadness": {
+            "3": 124,
+            "1": 503,
+            "2": 246
+          },
+          "surprise": {
+            "1": 586,
+            "2": 214,
+            "3": 36
+          }
+        }
+      },
+      "dev": {
+        "file": "dev.jsonl",
+        "sha256": "ea8a429f9b80e062e341f0217c599bfb475141c251b7a2710c6b53dbb4a3944a",
+        "records": 115,
+        "groups": 115,
+        "augmented": 0,
+        "sentiment": {
+          "-100": 115
+        },
+        "emotion_support": {
+          "anger": 16,
+          "fear": 62,
+          "joy": 31,
+          "sadness": 34,
+          "surprise": 31
+        },
+        "intensity_support": {
+          "anger": {
+            "3": 1,
+            "2": 9,
+            "1": 6
+          },
+          "fear": {
+            "1": 36,
+            "2": 19,
+            "3": 7
+          },
+          "joy": {
+            "1": 20,
+            "2": 10,
+            "3": 1
+          },
+          "sadness": {
+            "1": 21,
+            "2": 9,
+            "3": 4
+          },
+          "surprise": {
+            "2": 12,
+            "1": 19
+          }
+        }
+      },
+      "test": {
+        "file": "test.jsonl",
+        "sha256": "44a504a7639e240078ac20b1b3d32e7c09eb9def9acd6a9465eaada81169b4d5",
+        "records": 2765,
+        "groups": 2761,
+        "augmented": 0,
+        "sentiment": {
+          "-100": 2765
+        },
+        "emotion_support": {
+          "anger": 322,
+          "fear": 1543,
+          "joy": 670,
+          "sadness": 880,
+          "surprise": 799
+        },
+        "intensity_support": {
+          "anger": {
+            "1": 188,
+            "3": 37,
+            "2": 97
+          },
+          "fear": {
+            "1": 832,
+            "3": 225,
+            "2": 486
+          },
+          "joy": {
+            "1": 438,
+            "2": 176,
+            "3": 56
+          },
+          "sadness": {
+            "1": 524,
+            "2": 224,
+            "3": 132
+          },
+          "surprise": {
+            "1": 553,
+            "3": 37,
+            "2": 209
+          }
+        }
+      }
+    },
+    "audit": {
+      "dataset": "brighter-dataset/BRIGHTER-emotion-intensities",
+      "revision": "08a5d61d3fc33036f97c8c76a61ff8d6f02f5157",
+      "input_hashes": {
+        "train": "c1571919bfc13a869bbc0cfad88a024efc0fb96678c242c29298c73aad9d1759",
+        "dev": "aecfe6fc4784269d33d5aecfa014d636743de40698a21412e28bb9dc605156b4",
+        "test": "3f5a64868e8cf6f5093bc59386da5d4d66c3a7e08f6a9cd9a480b32a054dbc05"
+      },
+      "unit": "text snippet",
+      "emotion_presence": "derived from Track B intensity > 0; not independent annotations",
+      "split": "official dev/test membership and labels; earlier-split text overlaps removed",
+      "excluded_conflicting_training_records": 7,
+      "excluded_train_dev_overlap_with_later_splits": {
+        "test": 0,
+        "dev": 0,
+        "train": 1
+      },
+      "removed_same_split_duplicates": {
+        "train": 2,
+        "dev": 0,
+        "test": 0
+      },
+      "test_labels_used_for_cleaning": false
+    }
+  },
+  "status": "trained",
+  "smoke": true,
+  "deterministic_algorithms": true,
+  "parameters": 109786391,
+  "trainable_parameters": 109786391,
+  "train_records_used": 2753,
+  "dev_records_used": 115,
+  "token_audit": {
+    "train": {
+      "records": 2753,
+      "max_tokens": 123,
+      "mean_tokens": 20.859789320741008,
+      "truncated_records": 0,
+      "truncated_fraction": 0.0
+    },
+    "dev": {
+      "records": 115,
+      "max_tokens": 65,
+      "mean_tokens": 20.52173913043478,
+      "truncated_records": 0,
+      "truncated_fraction": 0.0
+    }
+  },
+  "class_weights": {
+    "emotion": [
+      8.317220687866211,
+      1.7152647972106934,
+      4.090639114379883,
+      3.153493881225586,
+      3.2930619716644287
+    ],
+    "sentiment": null
+  },
+  "encoder_revision": "86b5e0934494bd15c9632b12f734a8a67f723594",
+  "selection": "mean dev task macro-F1; intensity macro over emotions; emotion threshold selected on dev",
+  "best_epoch": 1,
+  "optimizer_steps": 172,
+  "elapsed_seconds": 89.18439860000217,
+  "diagnostic_seconds": 1.708610800000315,
+  "peak_cuda_bytes": 4143410176,
+  "checkpoint_sha256": "369df9aff172f1c06dd0230aa6c48b54c73b62c4e8502e129fe7f82a8309933e",
+  "seconds_per_optimizer_step": 0.5203654732558154
+}

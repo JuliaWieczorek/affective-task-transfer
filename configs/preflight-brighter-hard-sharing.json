@@ -1,0 +1,14 @@
+{
+  "backbone": "bert-base-uncased",
+  "architecture": "hard_sharing",
+  "tasks": ["emotion", "intensity"],
+  "seed": 42,
+  "dataset": "data/prepared/brighter-study2-v1",
+  "output": "outputs/preflight-brighter-hard-sharing-2026-10-01",
+  "device": "cuda",
+  "smoke": true,
+  "epochs": 1,
+  "batch_size": 16,
+  "diagnostics": true,
+  "diagnostic_batch_size": 32
+}
