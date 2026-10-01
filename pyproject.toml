@@ -7,7 +7,7 @@ name = "affective-task-transfer"
 version = "0.1.0"
 description = "Refactored and extended implementation of multi-task emotion, intensity, and sentiment analysis"
 requires-python = ">=3.11"
-dependencies = ["torch>=2.6,<2.7", "transformers>=4.49,<4.50", "numpy>=1.26", "scikit-learn>=1.4", "scipy>=1.12", "huggingface-hub>=0.25", "pandas>=2.2", "pyarrow>=17", "matplotlib>=3.8", "sentencepiece>=0.2", "charset-normalizer>=3.4"]
+dependencies = ["torch>=2.9,<2.10", "transformers>=4.49,<4.50", "numpy>=1.26", "scikit-learn>=1.4", "scipy>=1.12", "huggingface-hub>=0.25", "pandas>=2.2", "pyarrow>=17", "matplotlib>=3.8", "sentencepiece>=0.2", "charset-normalizer>=3.4"]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]

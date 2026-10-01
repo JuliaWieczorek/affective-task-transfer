@@ -1,0 +1,15 @@
+{
+  "backbone": "bert-base-uncased",
+  "architecture": "matched_stl",
+  "tasks": ["emotion"],
+  "dataset": "data/prepared/brighter-study2-v1",
+  "output": "outputs/gpu-pilot-brighter",
+  "device": "cuda",
+  "smoke": true,
+  "epochs": 1,
+  "batch_size": 2,
+  "train_limit": 32,
+  "eval_limit": 16,
+  "max_steps": 3,
+  "diagnostics": false
+}
