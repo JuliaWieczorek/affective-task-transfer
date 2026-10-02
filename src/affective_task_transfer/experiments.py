@@ -1,5 +1,7 @@
 from itertools import combinations
+from datetime import datetime, timezone
 from pathlib import Path
+import time
 from .config import load_config
 from .io import write_json, read_json, sha256
 
@@ -46,26 +48,55 @@ def run_matrix(path,limit=None):
     from .training import train
     path=Path(path); manifest=read_json(path)
     selected=manifest["configs"][:limit] if limit else manifest["configs"]
+    total=len(selected)
+    progress_file=path.parent/"progress"/"status.json"
+    started=time.perf_counter()
+    timed_runs=[]
     results=[]
-    for file in selected:
+    def show_progress(completed,phase,run=None):
+        # Durations are from this invocation. Different architectures can take
+        # very different times, so this is a rough estimate, not a deadline.
+        eta=(sum(timed_runs)/len(timed_runs))*(total-completed) if timed_runs else None
+        state={"phase":phase,"completed":completed,"total":total,"current_run":run,
+               "invocation_elapsed_seconds":time.perf_counter()-started,"eta_seconds":eta,
+               "timed_runs":len(timed_runs),"estimate_method":"mean duration of timed runs in this invocation",
+               "updated_at_utc":datetime.now(timezone.utc).isoformat()}
+        write_json(progress_file,state)
+        estimate="pending first completed training run" if eta is None else f"about {int(eta//3600)} h {int((eta%3600)//60):02d} min"
+        print(f"matrix {completed}/{total} | {phase}"+
+              (f" | {run}" if run else "")+f" | remaining: {estimate}",flush=True)
+    show_progress(0,"starting")
+    for index,file in enumerate(selected):
         config=load_config(path.parent/file)
         run=Path(config["output"])
-        if (run/"manifest.json").exists():
-            previous=read_json(run/"manifest.json")
-            if previous["status"]=="trained" and previous["config"]==config:
-                if not (run/"best_model.pt").exists() or sha256(run/"best_model.pt")!=previous.get("checkpoint_sha256"):
-                    raise ValueError(f"Missing or changed checkpoint: {run}")
-                if not (run/"dev_predictions.json").exists():
-                    raise ValueError(f"Missing development predictions: {run}")
-                results.append({"run":str(run),"status":"already_trained"}); continue
-            if previous["status"]!="running" or previous["config"]!=config:
-                raise ValueError(f"Mismatched run: {run}. Preserve it and choose a new directory.")
-            train(config["dataset"],run,config)
-            results.append({"run":str(run),"status":"resumed"});continue
-        if run.exists() and any(run.iterdir()):
-            raise ValueError(f"Run directory has no manifest: {run}")
-        train(config["dataset"],run,config)
-        results.append({"run":str(run),"status":"trained"})
+        show_progress(index,"running",run.name)
+        run_started=time.perf_counter()
+        try:
+            if (run/"manifest.json").exists():
+                previous=read_json(run/"manifest.json")
+                if previous["status"]=="trained" and previous["config"]==config:
+                    if not (run/"best_model.pt").exists() or sha256(run/"best_model.pt")!=previous.get("checkpoint_sha256"):
+                        raise ValueError(f"Missing or changed checkpoint: {run}")
+                    if not (run/"dev_predictions.json").exists():
+                        raise ValueError(f"Missing development predictions: {run}")
+                    status="already_trained"
+                elif previous["status"]=="running" and previous["config"]==config:
+                    train(config["dataset"],run,config)
+                    status="resumed"
+                else:
+                    raise ValueError(f"Mismatched run: {run}. Preserve it and choose a new directory.")
+            else:
+                if run.exists() and any(run.iterdir()):
+                    raise ValueError(f"Run directory has no manifest: {run}")
+                train(config["dataset"],run,config)
+                status="trained"
+        except Exception:
+            show_progress(index,"failed",run.name)
+            raise
+        if status!="already_trained":
+            timed_runs.append(time.perf_counter()-run_started)
+        results.append({"run":str(run),"status":status})
+        show_progress(index+1,"complete" if index+1==total else status,run.name)
     return results
 
 def evaluate_matrix(path,split="test",limit=None):

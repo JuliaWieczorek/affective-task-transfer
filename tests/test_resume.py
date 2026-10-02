@@ -1,11 +1,10 @@
-import csv
 import pytest
 import torch
 from affective_task_transfer.config import load_config
 from affective_task_transfer.data import save_dataset
 from affective_task_transfer.io import read_json, read_jsonl, sha256, write_json
 from affective_task_transfer.reporting import matrix_result_files, report
-from affective_task_transfer.label_audit import sample_label_audit
+from affective_task_transfer.experiments import run_matrix
 from affective_task_transfer import training
 
 
@@ -78,25 +77,27 @@ def test_matrix_report_requires_every_verified_evaluation(tmp_path):
         matrix_result_files([matrix/"matrix.json"],"test")
 
 
-def test_label_audit_samples_train_only_with_parent_text(tmp_path, backbone):
-    def row(identifier,text,parent,aug,group):
-        return {"id":identifier,"text":text,"parent_id":parent,"group_id":group,
-                "is_augmented":aug,"emotion":[1],"intensity":[1],"sentiment":0}
-    train=[row("short-parent","i","short",False,"a"),
-           row("long-parent","i feel sad","long",False,"b"),
-           row("short-aug","feel","short",True,"a"),
-           row("long-aug","i feel sad sad","long",True,"b")]
-    dev=[row("dev","sad","dev",False,"c")]
-    test=[row("test","other","test",False,"d")]
-    dataset=tmp_path/"data"
-    save_dataset(dataset,{"train":train,"dev":dev,"test":test},["sad"],{})
-    output=tmp_path/"audit.csv"
-    result=sample_label_audit(dataset,output,backbone,per_stratum=1,historical_cutoff=4)
-    with output.open(encoding="utf-8-sig",newline="") as file:
-        sampled=list(csv.DictReader(file))
-    assert len(sampled)==4
-    assert {r["id"] for r in sampled}=={r["id"] for r in train}
-    assert next(r for r in sampled if r["id"]=="short-aug")["source_text"]=="i"
-    assert all(not r["emotion_plausible"] for r in sampled)
-    assert result["strata_counts"]=={s:1 for s in
-        ("original_short","original_long","augmented_short","augmented_long")}
+def test_matrix_progress_reports_completed_runs_and_eta(tmp_path, monkeypatch, capsys):
+    matrix=tmp_path/"matrix"
+    matrix.mkdir()
+    configs=[]
+    for index in range(2):
+        cfg=load_config(overrides={"dataset":str(tmp_path/"data"),
+            "output":str(tmp_path/f"run-{index}"),"tasks":["intensity"]})
+        name=f"run-{index}.json"
+        write_json(matrix/name,cfg)
+        configs.append(name)
+    write_json(matrix/"matrix.json",{"configs":configs})
+    calls=[]
+    monkeypatch.setattr(training,"train",lambda dataset,run,config:calls.append(str(run)))
+    result=run_matrix(matrix/"matrix.json")
+    progress=read_json(matrix/"progress"/"status.json")
+    assert len(calls)==2
+    assert [r["status"] for r in result]==["trained","trained"]
+    assert progress["phase"]=="complete"
+    assert progress["completed"]==progress["total"]==2
+    assert progress["eta_seconds"]==0
+    assert progress["timed_runs"]==2
+    output=capsys.readouterr().out
+    assert "matrix 1/2" in output and "remaining: about" in output
+    assert "matrix 2/2" in output

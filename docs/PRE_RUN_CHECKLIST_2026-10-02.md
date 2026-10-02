@@ -181,26 +181,9 @@ for name, counts in expected.items():
 if ($LASTEXITCODE -ne 0) { throw 'Kontrola danych nie przeszła' }
 ```
 
-Przed interpretacją etykiet przejrzyj lokalny arkusz 80 przykładów z
-**train**: po 20 oryginałów i augmentacji z każdej strony historycznego
-limitu 128 tokenów. Zawiera tekst źródłowy i użyty tekst, etykiety oraz
-puste kolumny dla oceny człowieka. Nie zawiera przykładów testowych.
-Plik `data/audit/` pozostaje poza Git. Jeżeli na docelowym komputerze
-arkusza brak, utwórz go tak samo:
-
-```powershell
-if (-not (Test-Path 'data/audit/study2-label-review.csv')) {
-    & .\.venv\Scripts\att.exe sample-label-audit --dataset data/prepared/meisd-study2-v1 --output data/audit/study2-label-review.csv --seed 2026 --per-stratum 20
-    if ($LASTEXITCODE -ne 0) { throw 'Nie utworzono próbki do audytu etykiet' }
-}
-Get-Content data/audit/study2-label-review.manifest.json
-```
-
-Zanotuj datę i osobę oceniającą, przypadki niepewne oraz rozbieżności
-między tekstem a emocją, intensywnością, sentymentem i odziedziczoną
-etykietą augmentacji. Jeśli błędy układają się w powtarzalny wzór,
-wstrzymaj interpretację wyniku i ustal wpływ na protokół **przed**
-odczytaniem testu. Arkusz nie jest automatycznym potwierdzeniem etykiet.
+Automatyczne kontrole przygotowania danych nie potwierdzają semantycznej
+poprawności odziedziczonych etykiet. Zachowaj to jako ograniczenie badania;
+ręczny przegląd próbek nie jest częścią protokołu ani warunkiem startu.
 
 ## 3. Pełnoepokowe próby GPU przed macierzą
 
@@ -363,7 +346,7 @@ foreach ($case in $learningCases) {
 ```
 
 Jeśli **oba** kilkuepokowe modele nadal przewidują tylko `low`,
-wstrzymaj pełny start do kontroli etykiet, maskowania i straty. Słaby
+wstrzymaj pełny start do kontroli rozkładu klas, maskowania i straty. Słaby
 F1 sam w sobie nie dowodzi błędu: po jego wykluczeniu może być
 prawdziwym negatywnym wynikiem. Nie dobieraj hiperparametrów po
 zajrzeniu do testu.
@@ -444,8 +427,7 @@ i ustal harmonogram lub zakres przed oceną testu. Zapisz tabelę
 - [ ] Trzy źródłowe SHA-256 MEISD są dokładne; oba manifesty mają
   1378/118/118 i 2753/115/2765, właściwą rewizję, `start` dla MEISD,
   dev/test bez augmentacji i brak przenikania grup/tekstów.
-- [ ] Ustalono limit **192 tokenów**, odnotowano wynik ręcznej oceny
-  próbki etykiet i decyzję o ewentualnych przypadkach spornych.
+- [ ] Ustalono limit **192 tokenów**.
 - [ ] Wszystkie 11 nowych prób przy 192 tokenach mają
   `status=trained`, checkpoint zgodny z hashem, finite straty,
   diagnostykę i routing MMoE. Wszystkie mieszczą się przy partii 16.
@@ -467,8 +449,7 @@ zapisu HIP/GPU. Słaby F1 sam w sobie nie jest automatycznym `no-go`.
 splitów, CPU zamiast GPU, nieudane testy, OOM, NaN/Inf, niekompletny
 checkpoint/diagnostyka, kolaps intensywności w obu dłuższych próbach
 bez wyjaśnienia, niewystarczający dysk lub `PlanningHours > 40` bez
-zmienionego planu. Powtarzalna niezgodność odziedziczonych etykiet z
-tekstem wymaga decyzji o zakresie twierdzeń. Jeśli partia 16 nie mieści się w VRAM, ustal nową
+zmienionego planu. Jeśli partia 16 nie mieści się w VRAM, ustal nową
 partię i akumulację, zapisz zmianę protokołu i ponów pomiary **przed**
 wygenerowaniem oficjalnej macierzy.
 
@@ -505,7 +486,11 @@ run z ostatniej zapisanej epoki. Częściowo wykonana epoka jest liczona
 ponownie. `history.jsonl` i `diagnostics.jsonl` zapisują wyniki w trakcie,
 a przejściowy `last_epoch.pt` zawiera model, optymalizator, scheduler
 i stan losowości; po ukończeniu runu jest usuwany. Nie kasuj katalogu
-po błędzie. Ocenę testową i raport wykonaj dopiero po przeglądzie całej
+po błędzie. Terminal pokazuje postęp każdej macierzy osobno (50 MEISD
+i 30 BRIGHTER) oraz orientacyjny pozostały czas po pierwszym ukończonym
+runie. Aktualny stan jest w `progress/status.json` w katalogu macierzy;
+prognoza zmienia się, gdy zaczynają się wolniejsze architektury.
+Ocenę testową i raport wykonaj dopiero po przeglądzie całej
 zaplanowanej macierzy:
 
 ```powershell
