@@ -1,0 +1,17 @@
+{
+    "max_length":  192,
+    "epochs":  6,
+    "device":  "cuda",
+    "dataset":  "data/prepared/brighter-study2-v1",
+    "backbone":  "bert-base-uncased",
+    "architecture":  "matched_stl",
+    "smoke":  true,
+    "diagnostics":  false,
+    "output":  "outputs\\preflight-study2-learning-2026-10-02\\brighter-stl-intensity",
+    "seed":  42,
+    "diagnostic_batch_size":  32,
+    "batch_size":  16,
+    "tasks":  [
+                  "intensity"
+              ]
+}
